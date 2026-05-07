@@ -423,6 +423,134 @@ pub const fn laman_redundancy_3d_ratio() -> (u32, u32) {
     (2, 1)
 }
 
+impl E12 {
+    /// Rotations by the D6 symmetry group of the hexagonal lattice.
+    ///
+    /// The six rotations: identity, 60°, 120°, 180°, 240°, 300°.
+    /// Each preserves the Eisenstein norm.
+    pub fn d6_rotations(self) -> [E12; 6] {
+        let r0 = self;
+        let r1 = E12::new(-self.b, self.a - self.b);   // 60°
+        let r2 = E12::new(self.b - self.a, -self.a);    // 120°
+        let r3 = E12::new(-self.a, -self.b);            // 180°
+        let r4 = E12::new(self.b, -self.a + self.b);    // 240°
+        let r5 = E12::new(self.a - self.b, self.a);     // 300°
+        [r0, r1, r2, r3, r4, r5]
+    }
+
+    /// Hex distance from origin: (|a| + |b| + |a+b|) / 2.
+    #[inline]
+    pub fn hex_distance(self) -> u32 {
+        ((self.a.abs() + self.b.abs() + (self.a + self.b).abs()) / 2) as u32
+    }
+
+    /// Check if this is a unit in Z[ω] (one of ±1, ±ω, ±ω²).
+    #[inline]
+    pub fn is_unit(self) -> bool {
+        self.norm() == 1
+    }
+
+    /// Scalar multiplication.
+    #[inline]
+    pub const fn scale(self, k: i32) -> E12 {
+        E12::new(self.a * k, self.b * k)
+    }
+
+    /// Euclidean division in Z[ω].
+    ///
+    /// Z[ω] is a Euclidean domain with norm N(a+bω) = a²-ab+b².
+    /// For any α, β ≠ 0, there exist γ, ρ such that α = βγ + ρ with N(ρ) < N(β).
+    ///
+    /// Returns (quotient, remainder) or None if divisor is zero.
+    pub fn div_rem(self, divisor: E12) -> Option<(E12, E12)> {
+        if divisor.a == 0 && divisor.b == 0 {
+            return None;
+        }
+
+        // α/β = α·conj(β) / N(β) = α·conj(β) / (a²-ab+b²)
+        let n = divisor.norm() as i64;
+        let conj_b = divisor.conjugate();
+        let numer = self * conj_b; // exact Eisenstein multiplication
+
+        // Round each coordinate to nearest integer
+        let qa = round_div(numer.a as i64, n);
+        let qb = round_div(numer.b as i64, n);
+
+        let quotient = E12::new(qa as i32, qb as i32);
+        let remainder = self - divisor * quotient;
+
+        Some((quotient, remainder))
+    }
+
+    /// Greatest common divisor via Euclidean algorithm in Z[ω].
+    ///
+    /// Uses the Euclidean property: gcd(α, β) = gcd(β, α mod β).
+    /// Returns a unit-normalized gcd (with a > 0, or a == 0 and b > 0).
+    pub fn gcd(self, other: E12) -> E12 {
+        let mut a = self;
+        let mut b = other;
+
+        while b.a != 0 || b.b != 0 {
+            let (_, rem) = a.div_rem(b).unwrap_or((a, E12::new(0, 0)));
+            a = b;
+            b = rem;
+        }
+
+        // Normalize: prefer the associate with a > 0
+        if a.a < 0 || (a.a == 0 && a.b < 0) {
+            a = E12::new(-a.a, -a.b);
+        }
+        a
+    }
+
+    /// Check if self divides other exactly in Z[ω].
+    pub fn divides(self, other: E12) -> bool {
+        if self.a == 0 && self.b == 0 {
+            return other.a == 0 && other.b == 0;
+        }
+        if let Some((_, rem)) = other.div_rem(self) {
+            rem.a == 0 && rem.b == 0
+        } else {
+            false
+        }
+    }
+
+    /// Compute all divisors of norm N(self) in Z[ω].
+    /// Returns associates (unit multiples) as a single representative.
+    pub fn norm_divisors(self) -> alloc::vec::Vec<E12> {
+        let n = self.norm() as i64;
+        let mut divisors = alloc::vec::Vec::new();
+
+        // Search for (a,b) with a²-ab+b² dividing n
+        let max_val = int_sqrt(n) + 1;
+        for a in -max_val..=max_val {
+            for b in -max_val..=max_val {
+                let d_norm = E12::new(a as i32, b as i32).norm() as i64;
+                if d_norm > 0 && n % d_norm == 0 {
+                    divisors.push(E12::new(a as i32, b as i32));
+                }
+            }
+        }
+        divisors
+    }
+}
+
+/// Round a/b to the nearest integer (rounding halves toward zero).
+fn round_div(a: i64, b: i64) -> i32 {
+    if b == 0 { return 0; }
+    let sign = if (a < 0) ^ (b < 0) { -1i64 } else { 1i64 };
+    let abs_a = a.abs();
+    let abs_b = b.abs();
+    let q = abs_a / abs_b;
+    let r = abs_a % abs_b;
+    // Round: if remainder > half of divisor, round up
+    if 2 * r > abs_b {
+        (sign * (q + 1)) as i32
+    } else {
+        (sign * q) as i32
+    }
+}
+
 extern crate alloc;
 
 #[cfg(test)]
@@ -594,5 +722,146 @@ mod tests {
         let p = E12::new(3, -2);
         use alloc::format;
         assert_eq!(format!("{}", p), "3+-2ω");
+    }
+
+    // === New tests for Euclidean division, GCD, and number theory ===
+
+    #[test]
+    fn test_div_rem_exact() {
+        // (2+ω) / (1+ω) should be exact since (1+ω)*(1+0ω) + (1+ω)*ω = 2+ω
+        // Actually: (2,1) / (1,1)
+        let alpha = E12::new(2, 1);
+        let beta = E12::new(1, 1);
+        let (q, r) = alpha.div_rem(beta).unwrap();
+        // Verify: alpha = beta * q + r
+        assert_eq!(beta * q + r, alpha);
+        // Remainder should have smaller norm
+        assert!(r.norm() < beta.norm() || (r.a == 0 && r.b == 0),
+            "Remainder norm {} >= divisor norm {}", r.norm(), beta.norm());
+    }
+
+    #[test]
+    fn test_div_rem_identity() {
+        let alpha = E12::new(5, -3);
+        let (q, r) = alpha.div_rem(E12::new(1, 0)).unwrap();
+        assert_eq!(q, alpha);
+        assert_eq!(r, E12::new(0, 0));
+    }
+
+    #[test]
+    fn test_div_rem_zero_divisor() {
+        let alpha = E12::new(5, 3);
+        assert!(alpha.div_rem(E12::new(0, 0)).is_none());
+    }
+
+    #[test]
+    fn test_euclidean_property() {
+        // For many random pairs, verify N(remainder) < N(divisor)
+        let mut state: u64 = 42;
+        let mut next_small = || -> i32 {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((state >> 40) & 0xF) as i32 - 8 // range [-8, 7]
+        };
+
+        for _ in 0..1000 {
+            let a = E12::new(next_small(), next_small());
+            let b = E12::new(next_small(), next_small());
+            if b.a == 0 && b.b == 0 { continue; }
+            if let Some((q, r)) = a.div_rem(b) {
+                // Verify reconstruction
+                assert_eq!(b * q + r, a,
+                    "Reconstruction failed: {} * {} + {} != {}",
+                    b, q, r, a);
+                // Verify Euclidean property
+                assert!(r.norm() < b.norm() || (r.a == 0 && r.b == 0),
+                    "N(rem)={} >= N(div)={} for {} / {}",
+                    r.norm(), b.norm(), a, b);
+            }
+        }
+    }
+
+    #[test]
+    fn test_gcd_identity() {
+        let a = E12::new(7, 3);
+        let gcd = a.gcd(E12::new(1, 0));
+        assert!(gcd.is_unit(), "gcd with 1 should be a unit");
+    }
+
+    #[test]
+    fn test_gcd_zero() {
+        let a = E12::new(5, -2);
+        let gcd = a.gcd(E12::new(0, 0));
+        // gcd(a, 0) = a (normalized)
+        assert_eq!(gcd.a().abs(), a.a().abs());
+        assert_eq!(gcd.b().abs(), a.b().abs());
+    }
+
+    #[test]
+    fn test_gcd_commutative() {
+        let a = E12::new(6, 3);
+        let b = E12::new(3, 9);
+        let gcd1 = a.gcd(b);
+        let gcd2 = b.gcd(a);
+        // Associates (may differ by a unit)
+        assert_eq!(gcd1.norm(), gcd2.norm());
+    }
+
+    #[test]
+    fn test_gcd_associates() {
+        // 3 and 3ω should have gcd = unit (they're associates)
+        let a = E12::new(3, 0);
+        let b = E12::new(0, 3); // = 3ω
+        let g = a.gcd(b);
+        assert_eq!(g.norm(), 9, "gcd(3, 3ω) should have norm 9");
+    }
+
+    #[test]
+    fn test_divides() {
+        // 2 divides 6 in Z[ω]
+        assert!(E12::new(2, 0).divides(E12::new(6, 0)));
+        // 7 doesn't divide (1+ω)
+        assert!(!E12::new(7, 0).divides(E12::new(1, 1)));
+        // 1+ω divides (2+2ω)
+        assert!(E12::new(1, 1).divides(E12::new(2, 2)));
+    }
+
+    #[test]
+    fn test_hex_distance() {
+        assert_eq!(E12::new(0, 0).hex_distance(), 0);
+        assert_eq!(E12::new(1, 0).hex_distance(), 1);
+        assert_eq!(E12::new(1, 1).hex_distance(), 2);
+        assert_eq!(E12::new(2, -1).hex_distance(), 2);
+        assert_eq!(E12::new(3, -2).hex_distance(), 3);
+    }
+
+    #[test]
+    fn test_is_unit() {
+        for dir in E12::directions() {
+            assert!(dir.is_unit(), "Direction {:?} should be a unit", dir);
+        }
+        assert!(!E12::new(2, 0).is_unit());
+        assert!(!E12::new(0, 0).is_unit());
+    }
+
+    #[test]
+    fn test_d6_rotations_norm_preserved() {
+        let p = E12::new(7, -3);
+        for rot in p.d6_rotations() {
+            assert_eq!(rot.norm(), p.norm(),
+                "D6 rotation should preserve norm");
+        }
+    }
+
+    #[test]
+    fn test_d6_rotations_composition() {
+        // Six 60° rotations should return to start
+        let p = E12::new(5, -2);
+        let rotations = p.d6_rotations();
+        // Apply 60° rotation 6 times
+        let mut current = p;
+        for _ in 0..6 {
+            current = E12::new(-current.b, current.a - current.b);
+        }
+        assert_eq!(current, p, "Six 60° rotations should be identity");
     }
 }
