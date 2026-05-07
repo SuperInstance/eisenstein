@@ -1,6 +1,6 @@
 [package]
 name = "eisenstein"
-version = "0.1.1"
+version = "0.3.0"
 edition = "2021"
 keywords = ["eisenstein", "hexagonal", "lattice", "constraint", "no-std"]
 categories = ["mathematics", "embedded", "no-std"]
@@ -9,5 +9,10 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/SuperInstance/eisenstein"
 
 [dependencies]
+libm = { version = "0.2", default-features = false }
+
+[features]
+default = []
+std = []
 
 [workspace]
