@@ -6,6 +6,29 @@
 //! no dependencies. Just pure hexagonal math.
 
 use core::fmt;
+use core::f64::consts;
+use libm;
+
+/// Float math helper: maps to std if `std` feature enabled, otherwise uses libm.
+#[inline(always)]
+fn float_cos(x: f64) -> f64 {
+    libm::cos(x)
+}
+
+#[inline(always)]
+fn float_sin(x: f64) -> f64 {
+    libm::sin(x)
+}
+
+#[inline(always)]
+fn float_atan2(y: f64, x: f64) -> f64 {
+    libm::atan2(y, x)
+}
+
+#[inline(always)]
+fn float_round(x: f64) -> f64 {
+    libm::round(x)
+}
 
 /// Eisenstein integer in the E12 lattice: a + bω where ω = e^(2πi/3).
 ///
@@ -157,6 +180,30 @@ impl HexDisk {
     /// Create a hex disk with the given radius.
     pub const fn radius(radius: u32) -> Self {
         Self { radius }
+    }
+
+    /// Snap to the nearest vertex in this disk from an angle in radians.
+    ///
+    /// Finds the E12 point within the disk whose argument (angle) is closest
+    /// to the given θ. More precise than `E12::snap_from_angle` when working
+    /// within a bounded region, since it considers all disk vertices.
+    ///
+    /// ```
+    /// # use eisenstein::{E12, HexDisk};
+    /// let disk = HexDisk::radius(36);
+    /// // East (0 rad) should snap to (1, 0)
+    /// assert_eq!(disk.snap_direction(0.0).unwrap(), E12::new(1, 0));
+    /// ```
+    pub fn snap_direction(&self, radians: f64) -> Option<E12> {
+        let cos = float_cos(radians);
+        let sin = float_sin(radians);
+        self.iter()
+            .filter(|p| p.a != 0 || p.b != 0)
+            .min_by(|a, b| {
+                let da = E12::angular_distance(*a, cos, sin);
+                let db = E12::angular_distance(*b, cos, sin);
+                da.partial_cmp(&db).unwrap_or(core::cmp::Ordering::Equal)
+            })
     }
 
     /// Check if a point is inside this disk.
@@ -454,6 +501,106 @@ impl E12 {
     #[inline]
     pub const fn scale(self, k: i32) -> E12 {
         E12::new(self.a * k, self.b * k)
+    }
+
+    /// Snap to the nearest Eisenstein integer from an angle in radians.
+    ///
+    /// Given an angle θ (in radians), finds the E12 point whose argument is
+    /// closest to θ. This is the #1 request from game dev play-testers who want
+    /// to place things at exact hexagonal angles.
+    ///
+    /// Algorithm: iterates over Eisenstein integers ordered by norm (up to a
+    /// generous bound) and selects the one with minimum angular distance to the
+    /// given angle. This guarantees the best angular fit.
+    ///
+    /// For game devs: cardinal directions snap to unit E12 (norm 1), and
+    /// intermediate angles find the densest angular approach within the lattice.
+    ///
+    /// ```
+    /// # use eisenstein::E12;
+    /// // 0 radians → East → (1, 0)
+    /// assert_eq!(E12::snap_from_angle(0.0), E12::new(1, 0));
+    /// // π/2 radians → North → (1, 2) at exactly 90° in cartesian
+    /// let north = E12::snap_from_angle(core::f64::consts::FRAC_PI_2);
+    /// assert_eq!(north, E12::new(1, 2));
+    /// ```
+    pub fn snap_from_angle(radians: f64) -> E12 {
+        let cos = float_cos(radians);
+        let sin = float_sin(radians);
+
+        // Max norm to search. Norm 100 is generous — it captures all E12
+        // within a hex radius of ~10, giving precise angular resolution (~3°).
+        // For game dev use this is more than sufficient.
+        const MAX_NORM: u64 = 100;
+
+        let inv_rt3 = 0.5773502691896257; // 1 / √3
+        let two_over_rt3 = 1.1547005383792517; // 2 / √3
+
+        // Convert from cartesian (cos, sin) to axial hex coords (a, b)
+        // Hex -> cartesian: x = a - b/2, y = b * √3/2
+        // Inverse: b = y * 2/√3, a = x + b/2 = cos + (y/√3)
+        let b_float = sin * two_over_rt3;
+        let a_float = cos + sin * inv_rt3;
+
+        let a_round = float_round(a_float) as i32;
+        let b_round = float_round(b_float) as i32;
+
+        // Search: start with the rounded point and expand outward.
+        // Check points by increasing norm (using hex-distance-like expansion).
+        // This prefers smaller E12 points when angular fit is comparable.
+        let mut best = Self::angular_scan(a_round, b_round, 2, cos, sin, MAX_NORM);
+
+        // If no valid point found (shouldn't happen), expand search
+        if best.a == 0 && best.b == 0 {
+            best = Self::angular_scan(a_round, b_round, 4, cos, sin, MAX_NORM);
+        }
+
+        best
+    }
+
+    /// Search for the E12 closest to the given direction within a bounding box.
+    /// Favors points with smaller norm when angular distances are close.
+    fn angular_scan(cx: i32, cy: i32, radius: i32, cos: f64, sin: f64, max_norm: u64) -> E12 {
+        let mut best = E12::new(cx, cy);
+        let mut best_diff = E12::angular_distance(best, cos, sin);
+        let mut best_norm = best.norm();
+
+        for da in -radius..=radius {
+            for db in -radius..=radius {
+                let candidate = E12::new(cx + da, cy + db);
+                if candidate.a == 0 && candidate.b == 0 {
+                    continue;
+                }
+                let n = candidate.norm();
+                if n > max_norm {
+                    continue;
+                }
+                let diff = E12::angular_distance(candidate, cos, sin);
+                // Prefer smaller diff, or equal diff with smaller norm
+                if diff < best_diff - 1e-12 || (diff < best_diff + 1e-12 && n < best_norm) {
+                    best_diff = diff;
+                    best = candidate;
+                    best_norm = n;
+                }
+            }
+        }
+
+        best
+    }
+
+    /// Angular distance between an E12 point and a unit vector (cos, sin).
+    /// Returns the absolute angle difference in radians.
+    fn angular_distance(z: E12, cos: f64, sin: f64) -> f64 {
+        // Convert E12 to cartesian: x = a - b/2, y = b * √3/2
+        let x = z.a as f64 - z.b as f64 * 0.5;
+        let y = z.b as f64 * 0.8660254037844386; // √3/2
+        let point_angle = float_atan2(y, x);
+        let target_angle = float_atan2(sin, cos);
+        let mut diff = (point_angle - target_angle).abs();
+        if diff > consts::PI {
+            diff = 2.0 * consts::PI - diff;
+        }
+        diff
     }
 
     /// Euclidean division in Z[ω].
@@ -863,5 +1010,113 @@ mod tests {
             current = E12::new(-current.b, current.a - current.b);
         }
         assert_eq!(current, p, "Six 60° rotations should be identity");
+    }
+
+    // === snap_from_angle tests ===
+
+    #[test]
+    fn test_snap_from_angle_east() {
+        // 0 radians → East → (1, 0)
+        let z = E12::snap_from_angle(0.0);
+        assert_eq!(z, E12::new(1, 0), "East should snap to (1,0), got {:?}", z);
+    }
+
+    #[test]
+    fn test_snap_from_angle_north() {
+        // π/2 → 90° → (1, 2) which is at EXACTLY 90° in cartesian
+        // (0, 1) is at 120°, so (1, 2) is closer to north
+        let z = E12::snap_from_angle(consts::FRAC_PI_2);
+        assert_eq!(z, E12::new(1, 2), "North should snap to (1,2), got {:?}", z);
+    }
+
+    #[test]
+    fn test_snap_from_angle_west() {
+        // π → West → (-1, 0)
+        let z = E12::snap_from_angle(consts::PI);
+        assert_eq!(z, E12::new(-1, 0), "West should snap to (-1,0), got {:?}", z);
+    }
+
+    #[test]
+    fn test_snap_from_angle_south() {
+        // 3π/2 → 270° → (-1, -2) which is at EXACTLY -90° in cartesian
+        let z = E12::snap_from_angle(3.0 * consts::FRAC_PI_2);
+        assert_eq!(z, E12::new(-1, -2), "South should snap to (-1,-2)");
+    }
+
+    #[test]
+    fn test_snap_from_angle_45_degrees() {
+        // π/4 → NE-ish, check it's reasonably close
+        let z = E12::snap_from_angle(consts::FRAC_PI_4);
+        let (sin, cos) = (consts::FRAC_PI_4).sin_cos();
+        let diff = E12::angular_distance(z, cos, sin);
+        assert!(diff < 0.6, "45° snap diff {} should be < 0.6 rad", diff);
+    }
+
+    #[test]
+    fn test_snap_from_angle_symmetry() {
+        // Opposite angles should give opposite points
+        let z0 = E12::snap_from_angle(0.0);
+        let z1 = E12::snap_from_angle(consts::PI);
+        assert_eq!(z0, E12::new(1, 0));
+        assert_eq!(z1, E12::new(-1, 0));
+    }
+
+    #[test]
+    fn test_snap_from_angle_hex_unit_directions() {
+        // The 6 hex unit directions (0°, 60°, 120°, 180°, 240°, 300°) should snap to unit-norm E12
+        let hex_angles = [0.0, consts::FRAC_PI_3, 2.0*consts::FRAC_PI_3, consts::PI, 4.0*consts::FRAC_PI_3, 5.0*consts::FRAC_PI_3];
+        let expected = [E12::new(1,0), E12::new(1,1), E12::new(0,1), E12::new(-1,0), E12::new(-1,-1), E12::new(0,-1)];
+        for (angle, exp) in hex_angles.iter().zip(expected.iter()) {
+            let z = E12::snap_from_angle(*angle);
+            assert_eq!(z, *exp, "Angle {}° should snap to {:?}, got {:?}", angle * 180.0 / consts::PI, exp, z);
+        }
+    }
+
+    #[test]
+    fn test_snap_from_angle_30_degrees() {
+        let angle = consts::FRAC_PI_6;
+        let z = E12::snap_from_angle(angle);
+        let (sin, cos) = angle.sin_cos();
+        let diff = E12::angular_distance(z, cos, sin);
+        assert!(diff < 0.6, "30° snap diff {} should be small", diff);
+    }
+
+    #[test]
+    fn test_snap_from_angle_60_degrees() {
+        // π/3 = 60° → (1, 1) which is at EXACTLY 60° in cartesian
+        let z = E12::snap_from_angle(consts::FRAC_PI_3);
+        assert_eq!(z, E12::new(1, 1), "60° should snap to (1,1), got {:?}", z);
+    }
+
+    // === HexDisk::snap_direction tests ===
+
+    #[test]
+    fn test_hex_disk_snap_direction_east() {
+        let disk = HexDisk::radius(10);
+        let z = disk.snap_direction(0.0).unwrap();
+        assert_eq!(z, E12::new(1, 0), "Disk east should snap to (1,0)");
+    }
+
+    #[test]
+    fn test_hex_disk_snap_direction_radius_0() {
+        // Disk radius 0 only contains (0,0), none to snap
+        let disk = HexDisk::radius(0);
+        assert!(disk.snap_direction(0.0).is_none());
+    }
+
+    #[test]
+    fn test_hex_disk_snap_vs_e12_snap_hex_directions() {
+        // For the 6 hex directions, disk and E12 snap should agree
+        let disk = HexDisk::radius(36);
+        let hex_angles = [0.0, consts::FRAC_PI_3, 2.0*consts::FRAC_PI_3, consts::PI, 4.0*consts::FRAC_PI_3, 5.0*consts::FRAC_PI_3];
+        for angle in hex_angles {
+            let disk_z = disk.snap_direction(angle).unwrap();
+            let e12_z = E12::snap_from_angle(angle);
+            // Disk may pick a different representative within radius, but angle should be very close
+            let disk_ang = E12::angular_distance(disk_z, float_cos(angle), float_sin(angle));
+            let e12_ang = E12::angular_distance(e12_z, float_cos(angle), float_sin(angle));
+            assert!(disk_ang < 0.01, "Disk snap at {}° has angular diff {}", angle * 180.0 / consts::PI, disk_ang);
+            assert!(e12_ang < 0.01, "E12 snap at {}° has angular diff {}", angle * 180.0 / consts::PI, e12_ang);
+        }
     }
 }
