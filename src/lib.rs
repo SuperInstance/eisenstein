@@ -2,32 +2,45 @@
 
 //! Zero-drift hexagonal lattice constraints via Eisenstein integers.
 //!
-//! Exact integer arithmetic for safety-critical systems. No floats, no unsafe,
-//! no dependencies. Just pure hexagonal math.
+//! Exact integer arithmetic for safety-critical systems. Core type has zero
+//! dependencies and zero floats. Angle snapping (`snap` feature, default) adds
+//! libm for trig operations.
+//!
+//! # Feature flags
+//!
+//! - `snap` (default) — enables `snap_from_angle()` and `HexDisk::snap_direction()`.
+//!   Adds `libm` dependency for trig functions.
+//! - `std` — enables `std` support. Without it, `no_std` compatible.
 
-use core::fmt;
+#[cfg(feature = "snap")]
 use core::f64::consts;
+#[cfg(feature = "snap")]
 use libm;
 
-/// Float math helper: maps to std if `std` feature enabled, otherwise uses libm.
-#[inline(always)]
-fn float_cos(x: f64) -> f64 {
-    libm::cos(x)
-}
+use core::fmt;
 
-#[inline(always)]
-fn float_sin(x: f64) -> f64 {
-    libm::sin(x)
-}
+/// Float math helpers — only compiled when the `snap` feature is enabled.
+#[cfg(feature = "snap")]
+mod float {
+    #[inline(always)]
+    pub fn cos(x: f64) -> f64 {
+        libm::cos(x)
+    }
 
-#[inline(always)]
-fn float_atan2(y: f64, x: f64) -> f64 {
-    libm::atan2(y, x)
-}
+    #[inline(always)]
+    pub fn sin(x: f64) -> f64 {
+        libm::sin(x)
+    }
 
-#[inline(always)]
-fn float_round(x: f64) -> f64 {
-    libm::round(x)
+    #[inline(always)]
+    pub fn atan2(y: f64, x: f64) -> f64 {
+        libm::atan2(y, x)
+    }
+
+    #[inline(always)]
+    pub fn round(x: f64) -> f64 {
+        libm::round(x)
+    }
 }
 
 /// Eisenstein integer in the E12 lattice: a + bω where ω = e^(2πi/3).
@@ -194,9 +207,10 @@ impl HexDisk {
     /// // East (0 rad) should snap to (1, 0)
     /// assert_eq!(disk.snap_direction(0.0).unwrap(), E12::new(1, 0));
     /// ```
+    #[cfg(feature = "snap")]
     pub fn snap_direction(&self, radians: f64) -> Option<E12> {
-        let cos = float_cos(radians);
-        let sin = float_sin(radians);
+        let cos = float::cos(radians);
+        let sin = float::sin(radians);
         self.iter()
             .filter(|p| p.a != 0 || p.b != 0)
             .min_by(|a, b| {
@@ -524,9 +538,10 @@ impl E12 {
     /// let north = E12::snap_from_angle(core::f64::consts::FRAC_PI_2);
     /// assert_eq!(north, E12::new(1, 2));
     /// ```
+    #[cfg(feature = "snap")]
     pub fn snap_from_angle(radians: f64) -> E12 {
-        let cos = float_cos(radians);
-        let sin = float_sin(radians);
+        let cos = float::cos(radians);
+        let sin = float::sin(radians);
 
         // Max norm to search. Norm 100 is generous — it captures all E12
         // within a hex radius of ~10, giving precise angular resolution (~3°).
@@ -542,8 +557,8 @@ impl E12 {
         let b_float = sin * two_over_rt3;
         let a_float = cos + sin * inv_rt3;
 
-        let a_round = float_round(a_float) as i32;
-        let b_round = float_round(b_float) as i32;
+        let a_round = float::round(a_float) as i32;
+        let b_round = float::round(b_float) as i32;
 
         // Search: start with the rounded point and expand outward.
         // Check points by increasing norm (using hex-distance-like expansion).
@@ -560,6 +575,7 @@ impl E12 {
 
     /// Search for the E12 closest to the given direction within a bounding box.
     /// Favors points with smaller norm when angular distances are close.
+    #[cfg(feature = "snap")]
     fn angular_scan(cx: i32, cy: i32, radius: i32, cos: f64, sin: f64, max_norm: u64) -> E12 {
         let mut best = E12::new(cx, cy);
         let mut best_diff = E12::angular_distance(best, cos, sin);
@@ -590,12 +606,13 @@ impl E12 {
 
     /// Angular distance between an E12 point and a unit vector (cos, sin).
     /// Returns the absolute angle difference in radians.
+    #[cfg(feature = "snap")]
     fn angular_distance(z: E12, cos: f64, sin: f64) -> f64 {
         // Convert E12 to cartesian: x = a - b/2, y = b * √3/2
         let x = z.a as f64 - z.b as f64 * 0.5;
         let y = z.b as f64 * 0.8660254037844386; // √3/2
-        let point_angle = float_atan2(y, x);
-        let target_angle = float_atan2(sin, cos);
+        let point_angle = float::atan2(y, x);
+        let target_angle = float::atan2(sin, cos);
         let mut diff = (point_angle - target_angle).abs();
         if diff > consts::PI {
             diff = 2.0 * consts::PI - diff;
@@ -1015,6 +1032,7 @@ mod tests {
     // === snap_from_angle tests ===
 
     #[test]
+    #[cfg(feature = "snap")]
     fn test_snap_from_angle_east() {
         // 0 radians → East → (1, 0)
         let z = E12::snap_from_angle(0.0);
@@ -1022,6 +1040,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "snap")]
     fn test_snap_from_angle_north() {
         // π/2 → 90° → (1, 2) which is at EXACTLY 90° in cartesian
         // (0, 1) is at 120°, so (1, 2) is closer to north
@@ -1030,6 +1049,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "snap")]
     fn test_snap_from_angle_west() {
         // π → West → (-1, 0)
         let z = E12::snap_from_angle(consts::PI);
@@ -1037,6 +1057,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "snap")]
     fn test_snap_from_angle_south() {
         // 3π/2 → 270° → (-1, -2) which is at EXACTLY -90° in cartesian
         let z = E12::snap_from_angle(3.0 * consts::FRAC_PI_2);
@@ -1044,6 +1065,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "snap")]
     fn test_snap_from_angle_45_degrees() {
         // π/4 → NE-ish, check it's reasonably close
         let z = E12::snap_from_angle(consts::FRAC_PI_4);
@@ -1053,6 +1075,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "snap")]
     fn test_snap_from_angle_symmetry() {
         // Opposite angles should give opposite points
         let z0 = E12::snap_from_angle(0.0);
@@ -1062,6 +1085,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "snap")]
     fn test_snap_from_angle_hex_unit_directions() {
         // The 6 hex unit directions (0°, 60°, 120°, 180°, 240°, 300°) should snap to unit-norm E12
         let hex_angles = [0.0, consts::FRAC_PI_3, 2.0*consts::FRAC_PI_3, consts::PI, 4.0*consts::FRAC_PI_3, 5.0*consts::FRAC_PI_3];
@@ -1073,6 +1097,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "snap")]
     fn test_snap_from_angle_30_degrees() {
         let angle = consts::FRAC_PI_6;
         let z = E12::snap_from_angle(angle);
@@ -1082,6 +1107,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "snap")]
     fn test_snap_from_angle_60_degrees() {
         // π/3 = 60° → (1, 1) which is at EXACTLY 60° in cartesian
         let z = E12::snap_from_angle(consts::FRAC_PI_3);
@@ -1091,6 +1117,7 @@ mod tests {
     // === HexDisk::snap_direction tests ===
 
     #[test]
+    #[cfg(feature = "snap")]
     fn test_hex_disk_snap_direction_east() {
         let disk = HexDisk::radius(10);
         let z = disk.snap_direction(0.0).unwrap();
@@ -1098,6 +1125,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "snap")]
     fn test_hex_disk_snap_direction_radius_0() {
         // Disk radius 0 only contains (0,0), none to snap
         let disk = HexDisk::radius(0);
@@ -1105,6 +1133,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "snap")]
     fn test_hex_disk_snap_vs_e12_snap_hex_directions() {
         // For the 6 hex directions, disk and E12 snap should agree
         let disk = HexDisk::radius(36);
@@ -1113,8 +1142,8 @@ mod tests {
             let disk_z = disk.snap_direction(angle).unwrap();
             let e12_z = E12::snap_from_angle(angle);
             // Disk may pick a different representative within radius, but angle should be very close
-            let disk_ang = E12::angular_distance(disk_z, float_cos(angle), float_sin(angle));
-            let e12_ang = E12::angular_distance(e12_z, float_cos(angle), float_sin(angle));
+            let disk_ang = E12::angular_distance(disk_z, float::cos(angle), float::sin(angle));
+            let e12_ang = E12::angular_distance(e12_z, float::cos(angle), float::sin(angle));
             assert!(disk_ang < 0.01, "Disk snap at {}° has angular diff {}", angle * 180.0 / consts::PI, disk_ang);
             assert!(e12_ang < 0.01, "E12 snap at {}° has angular diff {}", angle * 180.0 / consts::PI, e12_ang);
         }
