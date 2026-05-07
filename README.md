@@ -15,7 +15,7 @@ Zero unsafe code. Zero floating point. Zero dependencies. `no_std` compatible. r
 - **`EisensteinTriple`** — Parametric generator `(m²-n², 2mn-n², m²-mn+n²)`
   - Multiplication closure: N(z₁z₂) = N(z₁)N(z₂)
   - D₆ Weyl orbit invariance
-  - ~73% denser than Pythagorean triples
+  - ~6.8× denser than Pythagorean triples (59,841 vs 10,428 at c < 65,536)
 
 ## Quick Start
 
@@ -42,7 +42,7 @@ Eisenstein integers `Z[ω]` are the natural coordinate system for hexagonal latt
 1. **6 units** = 6 hex neighbors (no lookup table needed)
 2. **Norm multiplicativity** gives exact integer constraint propagation
 3. **D₆ symmetry** is built into the algebra (Weyl group of A₂)
-4. **1.73× triple density** vs Pythagorean — more solutions per search step
+4. **~6.8× triple density** vs Pythagorean — far more solutions per search step
 5. **Laman rigidity** — hex lattice has 1.5× edge redundancy (safety margin)
 
 ## Applications
