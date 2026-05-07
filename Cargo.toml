@@ -1,6 +1,6 @@
 [package]
 name = "eisenstein"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 keywords = ["eisenstein", "hexagonal", "lattice", "constraint", "no-std"]
 categories = ["mathematics", "embedded", "no-std"]
