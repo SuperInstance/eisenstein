@@ -1,0 +1,13 @@
+[package]
+name = "eisenstein"
+version = "0.1.0"
+edition = "2021"
+keywords = ["eisenstein", "hexagonal", "lattice", "constraint", "no-std"]
+categories = ["mathematics", "embedded", "no-std"]
+description = "Zero-drift hexagonal lattice constraints via Eisenstein integers — exact arithmetic for safety-critical systems"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/SuperInstance/eisenstein"
+
+[dependencies]
+
+[workspace]
