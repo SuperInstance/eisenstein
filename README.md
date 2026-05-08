@@ -1,6 +1,6 @@
 # eisenstein
 
-**The keel. Everything else in the ecosystem is built on this.**
+**Exact hexagonal coordinates. No floating point. No drift. No dependencies.**
 
 `#![no_std]`. Zero dependencies. Zero unsafe code. Exact integer arithmetic for hexagonal lattices through Eisenstein integers — `a + bω` where `ω = (-1 + √-3)/2`. The norm `a² - ab + b²` is always an integer. No floating point, no rounding, no drift. This is the algebra of the hexagonal lattice, and it's exact all the way down.
 
