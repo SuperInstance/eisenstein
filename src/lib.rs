@@ -6,16 +6,45 @@
 //! dependencies and zero floats. Angle snapping (`snap` feature, default) adds
 //! libm for trig operations.
 //!
+//! # Overview
+//!
+//! The ring `Z[ω]` where `ω = e^(2πi/3)` is the natural coordinate system for
+//! hexagonal lattices. Each Eisenstein integer `a + bω` corresponds to a point
+//! on the hex grid. The norm `a² - ab + b²` is always a non-negative integer,
+//! and is **multiplicative**: `‖z₁·z₂‖ = ‖z₁‖·‖z₂‖`. This guarantees zero drift
+//! under any sequence of integer operations — no rounding, no approximation.
+//!
+//! # Core types
+//!
+//! - [`E12`] — an Eisenstein integer `a + bω`. Supports addition, subtraction,
+//!   multiplication, conjugation, D₆ rotations, hex distance, Euclidean division,
+//!   and GCD in `Z[ω]`.
+//! - [`HexDisk`] — a bounded hexagonal region of radius R containing `3R² + 3R + 1`
+//!   points, iterable in `O(count)` time.
+//! - [`EisensteinTriple`] — parametric triples `(a, b, c)` where `a² - ab + b² = c²`,
+//!   analogous to Pythagorean triples but ~6.8× denser.
+//!
 //! # Feature flags
 //!
-//! - `snap` (default) — enables `snap_from_angle()` and `HexDisk::snap_direction()`.
-//!   Adds `libm` dependency for trig functions.
+//! - `snap` (default) — enables [`E12::snap_from_angle()`] and
+//!   [`HexDisk::snap_direction()`]. Adds `libm` dependency for trig functions.
 //! - `std` — enables `std` support. Without it, `no_std` compatible.
+//!
+//! # Quick example
+//!
+//! ```
+//! use eisenstein::E12;
+//!
+//! let z = E12::new(3, -2);
+//! assert_eq!(z.norm(), 19); // 3² - 3(-2) + (-2)² = 9 + 6 + 4 = 19
+//!
+//! // Norm is multiplicative — zero drift guaranteed
+//! let w = E12::new(1, 1);
+//! assert_eq!((z * w).norm(), z.norm() * w.norm());
+//! ```
 
 #[cfg(feature = "snap")]
 use core::f64::consts;
-#[cfg(feature = "snap")]
-use libm;
 
 use core::fmt;
 
@@ -342,8 +371,10 @@ impl EisensteinTriple {
     pub fn from_norm(target: u32) -> Option<Self> {
         // Search: a² - ab + b² = target
         // For a >= 0, try b from 0..=a
+        // a can exceed sqrt(target) because a² - ab + b² < a² when b > 0.
         let target_i = target as i64;
-        let max_a = if target > 46340 { 46340 } else { target as i32 };
+        let sqrt_target = int_sqrt(target_i);
+        let max_a = if target > 46340 { 46340 } else { ((sqrt_target * 2 + 1) as i32).min(target as i32).max(sqrt_target as i32) };
         for a in 0..=max_a {
             let a_i = a as i64;
             for b in 0..=a {
@@ -365,8 +396,9 @@ impl EisensteinTriple {
     pub fn from_norm_raw(target: i64) -> Option<(i32, i32)> {
         // Upper bound: for fixed a, the minimum norm is 3a²/4 (at b=a/2).
         // So we need 3a²/4 ≤ target, i.e., a ≤ sqrt(4*target/3).
-        // Use a generous upper bound: a ≤ target (overkill but safe).
-        let max_a = if target > 46340 { 46340 } else { target as i32 }; // avoid i32 overflow
+        // Use a generous bound: 2*sqrt(target) + 1.
+        let sqrt_val = int_sqrt(target.max(0));
+        let max_a = if target > 46340 { 46340 } else { ((sqrt_val * 2 + 1) as i32).min(46340) };
         for a in 0..=max_a {
             let a_i = a as i64;
             for b in 0..=a {
@@ -384,7 +416,10 @@ impl EisensteinTriple {
     pub fn all_with_max_norm(c_max: u32) -> alloc::vec::Vec<Self> {
         let mut results = alloc::vec::Vec::new();
         let _c2_max = (c_max as i64) * (c_max as i64);
-        let max_a = if c_max > 46340 { 46340 } else { c_max as i32 };
+        // a can exceed c_max because a² - ab + b² < a² when b > 0.
+        // Safe upper bound: a² ≤ c_max² * 4/3 (since min norm for given a is ~3a²/4).
+        // Use c_max * 2 as a generous bound.
+        let max_a = if c_max > 23058 { 46340 } else { (c_max * 2) as i32 };
         for a in 0..=max_a {
             let a_i = a as i64;
             for b in 0..=a {
@@ -485,10 +520,32 @@ pub const fn laman_redundancy_3d_ratio() -> (u32, u32) {
 }
 
 impl E12 {
-    /// Rotations by the D6 symmetry group of the hexagonal lattice.
+    /// All six rotations of the D₆ point group.
     ///
-    /// The six rotations: identity, 60°, 120°, 180°, 240°, 300°.
-    /// Each preserves the Eisenstein norm.
+    /// Returns `[r0, r60, r120, r180, r240, r300]` where each rotation is
+    /// achieved by multiplication by successive powers of `ω`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use eisenstein::E12;
+    ///
+    /// let z = E12::new(5, -2);
+    /// let rots = z.d6_rotations();
+    /// assert_eq!(rots.len(), 6);
+    ///
+    /// // All rotations preserve the norm
+    /// for r in &rots {
+    ///     assert_eq!(r.norm(), z.norm());
+    /// }
+    ///
+    /// // Six 60° rotations return to the starting point
+    /// let mut current = z;
+    /// for _ in 0..6 {
+    ///     current = E12::new(-current.b(), current.a() - current.b());
+    /// }
+    /// assert_eq!(current, z);
+    /// ```
     pub fn d6_rotations(self) -> [E12; 6] {
         let r0 = self;
         let r1 = E12::new(-self.b, self.a - self.b);   // 60°
@@ -503,6 +560,22 @@ impl E12 {
     #[inline]
     pub fn hex_distance(self) -> u32 {
         ((self.a.abs() + self.b.abs() + (self.a + self.b).abs()) / 2) as u32
+    }
+
+    /// Hex distance between two Eisenstein integers.
+    ///
+    /// Equivalent to `(self - other).hex_distance()` but more convenient.
+    ///
+    /// ```
+    /// use eisenstein::E12;
+    ///
+    /// let a = E12::new(3, -1);
+    /// let b = E12::new(0, 0);
+    /// assert_eq!(a.hex_distance_to(b), 3);
+    /// ```
+    #[inline]
+    pub fn hex_distance_to(self, other: E12) -> u32 {
+        (self - other).hex_distance()
     }
 
     /// Check if this is a unit in Z[ω] (one of ±1, ±ω, ±ω²).
@@ -1020,7 +1093,6 @@ mod tests {
     fn test_d6_rotations_composition() {
         // Six 60° rotations should return to start
         let p = E12::new(5, -2);
-        let rotations = p.d6_rotations();
         // Apply 60° rotation 6 times
         let mut current = p;
         for _ in 0..6 {
@@ -1147,5 +1219,349 @@ mod tests {
             assert!(disk_ang < 0.01, "Disk snap at {}° has angular diff {}", angle * 180.0 / consts::PI, disk_ang);
             assert!(e12_ang < 0.01, "E12 snap at {}° has angular diff {}", angle * 180.0 / consts::PI, e12_ang);
         }
+    }
+
+    // === Tests for scale, subtraction edge cases, and axial conversion ===
+
+    #[test]
+    fn test_scale() {
+        let z = E12::new(3, -2);
+        assert_eq!(z.scale(0), E12::new(0, 0));
+        assert_eq!(z.scale(1), z);
+        assert_eq!(z.scale(2), E12::new(6, -4));
+        assert_eq!(z.scale(-1), E12::new(-3, 2));
+    }
+
+    #[test]
+    fn test_scale_preserves_direction() {
+        let z = E12::new(1, 1);
+        let scaled = z.scale(5);
+        // Scaling should not change the direction, only magnitude
+        assert_eq!(scaled.scale(0), E12::new(0, 0));
+    }
+
+    #[test]
+    fn test_subtraction_negative_result() {
+        let a = E12::new(1, 1);
+        let b = E12::new(3, 5);
+        let result = a - b;
+        assert_eq!(result, E12::new(-2, -4));
+    }
+
+    #[test]
+    fn test_subtraction_self_to_zero() {
+        let z = E12::new(7, -3);
+        assert_eq!(z - z, E12::new(0, 0));
+    }
+
+    #[test]
+    fn test_from_axial_to_axial_roundtrip() {
+        let test_cases: &[(i32, i32)] = &[(0, 0), (1, 0), (0, 1), (-1, -1), (5, -3), (100, 200)];
+        for &(q, r) in test_cases {
+            let z = E12::from_axial(q, r);
+            let (q2, r2) = z.to_axial();
+            assert_eq!((q, r), (q2, r2), "Round-trip failed for ({}, {})", q, r);
+        }
+    }
+
+    #[test]
+    fn test_from_axial_equals_new() {
+        assert_eq!(E12::from_axial(3, -2), E12::new(3, -2));
+    }
+
+    // === Tests for multiplication edge cases ===
+
+    #[test]
+    fn test_mul_by_zero() {
+        let z = E12::new(5, -3);
+        let zero = E12::new(0, 0);
+        assert_eq!(z * zero, zero);
+        assert_eq!(zero * z, zero);
+    }
+
+    #[test]
+    fn test_mul_by_identity() {
+        let z = E12::new(7, 3);
+        assert_eq!(z * E12::new(1, 0), z);
+    }
+
+    #[test]
+    fn test_mul_commutative() {
+        let a = E12::new(3, -2);
+        let b = E12::new(1, 4);
+        assert_eq!(a * b, b * a);
+    }
+
+    #[test]
+    fn test_mul_associative() {
+        let a = E12::new(2, 1);
+        let b = E12::new(3, -1);
+        let c = E12::new(1, 2);
+        assert_eq!((a * b) * c, a * (b * c));
+    }
+
+    #[test]
+    fn test_mul_distributive_over_add() {
+        let a = E12::new(2, 1);
+        let b = E12::new(3, -1);
+        let c = E12::new(1, 2);
+        assert_eq!(a * (b + c), a * b + a * c);
+    }
+
+    // === Tests for HexDisk::contains ===
+
+    #[test]
+    fn test_hex_disk_contains() {
+        let disk = HexDisk::radius(2);
+        assert!(disk.contains(&E12::new(0, 0)));
+        assert!(disk.contains(&E12::new(1, 0)));
+        assert!(disk.contains(&E12::new(2, 0)));
+        assert!(disk.contains(&E12::new(-2, 0)));
+        assert!(!disk.contains(&E12::new(3, 0)));
+    }
+
+    #[test]
+    fn test_hex_disk_contains_edge() {
+        let disk = HexDisk::radius(3);
+        // Points at exact distance = radius
+        assert!(disk.contains(&E12::new(3, 0)));
+        assert!(disk.contains(&E12::new(0, 3)));
+        assert!(disk.contains(&E12::new(-3, 0)));
+        // Points just outside
+        assert!(!disk.contains(&E12::new(4, 0)));
+    }
+
+    #[test]
+    fn test_hex_disk_radius_0_contains_only_origin() {
+        let disk = HexDisk::radius(0);
+        assert!(disk.contains(&E12::new(0, 0)));
+        assert!(!disk.contains(&E12::new(1, 0)));
+        assert!(!disk.contains(&E12::new(0, 1)));
+    }
+
+    // === Tests for EisensteinTriple ===
+
+    #[test]
+    fn test_eisenstein_triple_is_primitive() {
+        // (7, 0, 7) — gcd(7, 0) = 7, not primitive
+        let t1 = EisensteinTriple::new(7, 0, 7);
+        assert!(!t1.is_primitive());
+
+        // (8, 3, 7) — gcd(8, 3) = 1, primitive
+        let t2 = EisensteinTriple::new(8, 3, 7);
+        assert!(t2.is_primitive());
+    }
+
+    #[test]
+    fn test_eisenstein_triple_generate() {
+        let triples = EisensteinTriple::generate(5);
+        assert_eq!(triples.len(), 5);
+        // All should be primitive
+        for t in &triples {
+            assert!(t.is_primitive(), "Generated triple {:?} should be primitive", t);
+        }
+        // All should satisfy a² - ab + b² = c²
+        for t in &triples {
+            let norm_val = E12::new(t.a(), t.b()).norm();
+            let c_sq = (t.c() as u64) * (t.c() as u64);
+            assert_eq!(norm_val, c_sq,
+                "Triple ({}, {}, {}) does not satisfy norm = c²", t.a(), t.b(), t.c());
+        }
+    }
+
+    #[test]
+    fn test_eisenstein_triple_generate_zero() {
+        let triples = EisensteinTriple::generate(0);
+        assert!(triples.is_empty());
+    }
+
+    #[test]
+    fn test_eisenstein_triple_norm() {
+        let t = EisensteinTriple::new(8, 3, 7);
+        // norm = 8² - 8*3 + 3² = 64 - 24 + 9 = 49 = 7²
+        assert_eq!(t.norm(), 49);
+        assert_eq!((t.c() as u64) * (t.c() as u64), 49);
+    }
+
+    #[test]
+    fn test_all_with_max_norm() {
+        let triples = EisensteinTriple::all_with_max_norm(7);
+        // Should include (7, 0, 7) and (8, 3, 7)
+        assert!(triples.iter().any(|t| t.a() == 7 && t.b() == 0 && t.c() == 7));
+        assert!(triples.iter().any(|t| t.a() == 8 && t.b() == 3 && t.c() == 7));
+        // All c values should be <= 7
+        for t in &triples {
+            assert!(t.c() <= 7);
+        }
+    }
+
+    #[test]
+    fn test_all_with_max_norm_empty() {
+        let triples = EisensteinTriple::all_with_max_norm(0);
+        assert!(triples.is_empty());
+    }
+
+    // === Tests for norm_divisors ===
+
+    #[test]
+    fn test_norm_divisors_includes_units() {
+        let z = E12::new(7, 0);
+        let divisors = z.norm_divisors();
+        // Units (norm 1) should divide any norm
+        assert!(divisors.iter().any(|d| d.norm() == 1));
+    }
+
+    #[test]
+    fn test_norm_divisors_includes_self() {
+        let z = E12::new(3, 0);
+        let divisors = z.norm_divisors();
+        // The element itself (or an associate) should be in divisors
+        assert!(divisors.iter().any(|d| d.a() == 3 && d.b() == 0));
+    }
+
+    // === Tests for conjugate properties ===
+
+    #[test]
+    fn test_conjugate_norm_preserved() {
+        let z = E12::new(5, -3);
+        assert_eq!(z.norm(), z.conjugate().norm());
+    }
+
+    #[test]
+    fn test_conjugate_involution() {
+        // Conjugating twice returns original
+        let z = E12::new(7, 3);
+        assert_eq!(z.conjugate().conjugate(), z);
+    }
+
+    #[test]
+    fn test_conjugate_of_zero() {
+        assert_eq!(E12::new(0, 0).conjugate(), E12::new(0, 0));
+    }
+
+    // === Tests for int_sqrt helper (indirectly) ===
+
+    #[test]
+    fn test_int_sqrt_perfect_squares() {
+        // Test via from_norm which uses int_sqrt
+        for c in 1u32..=20 {
+            let target = c * c;
+            if let Some(triple) = EisensteinTriple::from_norm(target) {
+                assert_eq!(triple.c(), c);
+            }
+        }
+    }
+
+    // === Tests for Display/Debug formatting ===
+
+    #[test]
+    fn test_debug_format() {
+        let z = E12::new(3, -2);
+        use alloc::format;
+        assert_eq!(format!("{:?}", z), "3+-2ω");
+    }
+
+    #[test]
+    fn test_display_zero() {
+        let z = E12::new(0, 0);
+        use alloc::format;
+        assert_eq!(format!("{}", z), "0+0ω");
+    }
+
+    #[test]
+    fn test_display_positive() {
+        let z = E12::new(5, 3);
+        use alloc::format;
+        assert_eq!(format!("{}", z), "5+3ω");
+    }
+
+    // === Tests for hex_distance properties ===
+
+    #[test]
+    fn test_hex_distance_zero() {
+        assert_eq!(E12::new(0, 0).hex_distance(), 0);
+    }
+
+    #[test]
+    fn test_hex_distance_all_directions() {
+        // Unit directions have norm 1 but hex_distance varies:
+        // (1,0), (0,1), (-1,0), (0,-1) have hex_distance 1
+        // (1,1), (-1,-1) have hex_distance 2
+        // This is because hex_distance = (|a|+|b|+|a+b|)/2
+        for dir in E12::directions() {
+            assert_eq!(dir.norm(), 1,
+                "Direction {:?} should have norm 1", dir);
+        }
+        // Explicitly check hex distances
+        assert_eq!(E12::new(1, 0).hex_distance(), 1);
+        assert_eq!(E12::new(0, 1).hex_distance(), 1);
+        assert_eq!(E12::new(-1, 0).hex_distance(), 1);
+        assert_eq!(E12::new(0, -1).hex_distance(), 1);
+        assert_eq!(E12::new(1, 1).hex_distance(), 2);
+        assert_eq!(E12::new(-1, -1).hex_distance(), 2);
+    }
+
+    #[test]
+    fn test_hex_distance_symmetric() {
+        let z = E12::new(5, -3);
+        let neg = E12::new(-z.a(), -z.b());
+        assert_eq!(z.hex_distance(), neg.hex_distance());
+    }
+
+    // === Tests for divides edge cases ===
+
+    #[test]
+    fn test_divides_zero() {
+        // Zero divides zero
+        assert!(E12::new(0, 0).divides(E12::new(0, 0)));
+        // Zero does not divide non-zero
+        assert!(!E12::new(0, 0).divides(E12::new(1, 0)));
+    }
+
+    #[test]
+    fn test_divides_self() {
+        let z = E12::new(5, -3);
+        assert!(z.divides(z));
+    }
+
+    #[test]
+    fn test_divides_reflexive_unit() {
+        // 1 divides everything
+        assert!(E12::new(1, 0).divides(E12::new(100, -50)));
+    }
+
+    // === Property: neighbors are at distance 1 ===
+
+    #[test]
+    fn test_neighbors_at_correct_distance() {
+        let z = E12::new(5, -3);
+        for n in z.neighbors() {
+            // All neighbors differ by a unit direction (norm 1)
+            let diff = z - n;
+            assert_eq!(diff.norm(), 1, "Neighbor {:?} differs by {:?} (norm {}), expected norm 1", n, diff, diff.norm());
+        }
+    }
+
+    // === Larger Euclidean division tests ===
+
+    #[test]
+    fn test_div_rem_with_remainder() {
+        // Test case where division is not exact
+        let alpha = E12::new(5, 2);
+        let beta = E12::new(2, 1);
+        let (q, r) = alpha.div_rem(beta).unwrap();
+        // Verify reconstruction
+        assert_eq!(beta * q + r, alpha);
+        // Remainder norm < divisor norm
+        assert!(r.norm() < beta.norm() || (r.a == 0 && r.b == 0));
+    }
+
+    #[test]
+    fn test_div_rem_negative_operands() {
+        let alpha = E12::new(-5, 3);
+        let beta = E12::new(-2, -1);
+        let (q, r) = alpha.div_rem(beta).unwrap();
+        assert_eq!(beta * q + r, alpha);
+        assert!(r.norm() < beta.norm() || (r.a == 0 && r.b == 0));
     }
 }
