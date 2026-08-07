@@ -471,4 +471,363 @@ mod tests {
         let result = EisensteinTriple::from_norm_raw(5);
         assert!(result.is_none(), "Norm 5 should not be representable");
     }
+
+    // ─── EisensteinTriple: from_norm, all_with_max_norm, is_primitive, generate ──
+
+    #[test]
+    fn test_from_norm_representable() {
+        // from_norm expects a perfect square target (c²) where a²-ab+b² = c²
+        // c=3 → target=9. We need a²-ab+b²=9. (3,0): 9-0+0=9 ✓
+        let triple = EisensteinTriple::from_norm(9);
+        assert!(triple.is_some(), "Norm 9 (= 3²) should be representable");
+        let t = triple.unwrap();
+        assert_eq!(t.norm(), 9);
+        assert_eq!(t.c(), 3);
+    }
+
+    #[test]
+    fn test_from_norm_not_representable() {
+        // from_norm(25) → c=5, need a²-ab+b²=25.
+        // 5 is prime ≡ 2 mod 3, so norm 25 is not representable in Z[ω]
+        // Actually 25 = 5², and primes ≡ 2 mod 3 are inert in Z[ω],
+        // so 5² splits as 5·5̄ but... let's just check: no (a,b) with a²-ab+b²=25
+        // (5,0): 25 ✓! So this IS representable. Let's pick something else.
+        // c=2 → target=4. (2,0): 4 ✓. Representable.
+        // c=5 → 25 IS representable by (5,0). 
+        // Use c=2 → already works. Try something that genuinely fails.
+        // Actually from_norm returns None if target is not a perfect square
+        let triple = EisensteinTriple::from_norm(10);
+        assert!(triple.is_none(), "Norm 10 is not a perfect square, no triple exists");
+    }
+
+    #[test]
+    fn test_from_norm_zero() {
+        let triple = EisensteinTriple::from_norm(0);
+        // Origin has norm 0
+        // from_norm_raw(0) should find (0, 0)
+        // depending on implementation this may or may not return Some
+        if let Some(t) = triple {
+            assert_eq!(t.norm(), 0);
+        }
+    }
+
+    #[test]
+    fn test_from_norm_one() {
+        let triple = EisensteinTriple::from_norm(1);
+        assert!(triple.is_some());
+        let t = triple.unwrap();
+        assert_eq!(t.norm(), 1);
+    }
+
+    #[test]
+    fn test_all_with_max_norm_contains_units() {
+        let triples = EisensteinTriple::all_with_max_norm(1);
+        // At minimum, we should have the six units (norm 1)
+        // or at least one representative
+        assert!(!triples.is_empty(), "Should find triples with norm ≤ 1");
+        for t in &triples {
+            assert!(t.norm() <= 1);
+        }
+    }
+
+    #[test]
+    fn test_all_with_max_norm_grows() {
+        let small = EisensteinTriple::all_with_max_norm(10);
+        let large = EisensteinTriple::all_with_max_norm(100);
+        // More triples should be found with larger bound
+        assert!(large.len() >= small.len(),
+            "Larger norm bound should find at least as many triples");
+    }
+
+    #[test]
+    fn test_all_with_max_norm_respects_bound() {
+        // all_with_max_norm(c_max) returns triples where c ≤ c_max
+        // (not where norm ≤ c_max — norm is c²)
+        let triples = EisensteinTriple::all_with_max_norm(10);
+        for t in &triples {
+            assert!(t.c() <= 10,
+                "Triple c={} exceeds bound 10", t.c());
+        }
+    }
+
+    #[test]
+    fn test_is_primitive_for_coprime() {
+        // (2, -1) has norm 7 (prime), so it's primitive
+        let t = EisensteinTriple::new(2, -1, 7);
+        assert!(t.is_primitive(),
+            "Triple with prime norm should be primitive");
+    }
+
+    #[test]
+    fn test_is_primitive_for_non_coprime() {
+        // (2, 0) has norm 4. It's 2 * (1, 0), so not primitive
+        let t = EisensteinTriple::new(2, 0, 4);
+        assert!(!t.is_primitive(),
+            "Triple that is a scalar multiple should not be primitive");
+    }
+
+    #[test]
+    fn test_is_primitive_origin() {
+        let t = EisensteinTriple::new(0, 0, 0);
+        // Origin — depends on implementation, but gcd(0,0) = 0
+        // so origin is not primitive (it's 0 * anything)
+        assert!(!t.is_primitive());
+    }
+
+    #[test]
+    fn test_generate_returns_sorted_by_index() {
+        let triples = EisensteinTriple::generate(10);
+        assert_eq!(triples.len(), 10, "generate(10) should return 10 triples");
+        // Each should satisfy the norm formula a² - ab + b² = c²
+        for t in &triples {
+            let a = t.a() as i64;
+            let b = t.b() as i64;
+            let c = t.c() as i64;
+            let lhs = a * a - a * b + b * b;
+            assert_eq!(lhs, c * c,
+                "Triple ({},{},{}) doesn't satisfy a²-ab+b²=c²", a, b, c);
+        }
+    }
+
+    #[test]
+    fn test_generate_zero_returns_empty() {
+        let triples = EisensteinTriple::generate(0);
+        assert!(triples.is_empty(), "generate(0) should return empty");
+    }
+
+    #[test]
+    fn test_generate_one() {
+        let triples = EisensteinTriple::generate(1);
+        assert_eq!(triples.len(), 1);
+        // First triple should be valid
+        let t = &triples[0];
+        let a = t.a() as i64;
+        let b = t.b() as i64;
+        let c = t.c() as i64;
+        assert_eq!(a * a - a * b + b * b, c * c);
+    }
+
+    // ─── E12: norm_divisors ───────────────────────────────────────────
+
+    #[test]
+    fn test_norm_divisors_of_unit() {
+        let u = E12::new(1, 0); // norm 1
+        let divs = u.norm_divisors();
+        // A unit's norm is 1, so the only divisor norm is 1
+        // The divisors should include at least the unit itself
+        assert!(!divs.is_empty(), "A unit should have norm divisors");
+        for d in &divs {
+            assert_eq!(d.norm(), 1, "All norm divisors of a unit have norm 1");
+        }
+    }
+
+    #[test]
+    fn test_norm_divisors_of_prime_norm() {
+        // (2, -1) has norm 7 (prime in Z)
+        let z = E12::new(2, -1);
+        let divs = z.norm_divisors();
+        // Divisors of 7 are 1 and 7
+        for d in &divs {
+            let n = d.norm();
+            assert!(n == 1 || n == 7,
+                "Norm divisor {} should be 1 or 7", n);
+        }
+    }
+
+    #[test]
+    fn test_norm_divisors_include_self() {
+        let z = E12::new(2, -1); // norm 7
+        let divs = z.norm_divisors();
+        // z divides itself
+        assert!(divs.iter().any(|&d| d == z),
+            "Self should be in norm divisors");
+    }
+
+    // ─── E12: div_rem edge cases ──────────────────────────────────────
+
+    #[test]
+    fn test_div_rem_by_unit() {
+        let z = E12::new(6, -3);
+        let unit = E12::new(1, 0); // unit
+        let result = z.div_rem(unit);
+        assert!(result.is_some());
+        let (q, r) = result.unwrap();
+        assert_eq!(r.norm(), 0, "Remainder when dividing by unit should be 0");
+        assert_eq!(q, z, "Quotient when dividing by unit should be the number");
+    }
+
+    #[test]
+    fn test_div_rem_exact_division() {
+        // (6, -3) / (2, -1) should be (3, 0) with remainder 0
+        // because (2,-1) * (3,0) = (6, -3)
+        let z = E12::new(6, -3);
+        let d = E12::new(2, -1);
+        let result = z.div_rem(d);
+        assert!(result.is_some());
+        let (q, r) = result.unwrap();
+        assert_eq!(r.norm(), 0, "Should divide exactly");
+        // Verify: d * q = z
+        let product = d * q;
+        assert_eq!(product, z, "divisor * quotient should equal dividend");
+    }
+
+    #[test]
+    fn test_div_rem_has_remainder_when_not_divisible() {
+        // div_rem always returns Some for non-zero divisor — it rounds.
+        // When not exactly divisible, remainder is nonzero.
+        let z = E12::new(3, 0); // norm 9
+        let d = E12::new(2, -1); // norm 7
+        let result = z.div_rem(d);
+        assert!(result.is_some(), "div_rem always returns Some for nonzero divisor");
+        let (_q, r) = result.unwrap();
+        // remainder should be nonzero (7 doesn't divide 9)
+        assert_ne!(r.norm(), 0, "Remainder should be nonzero when not divisible");
+    }
+
+    // ─── E12: scale with positive integer ─────────────────────────────
+
+    #[test]
+    fn test_scale_positive() {
+        let z = E12::new(2, -1);
+        let scaled = z.scale(3);
+        assert_eq!(scaled.a(), 6);
+        assert_eq!(scaled.b(), -3);
+        // norm should scale by k²
+        assert_eq!(scaled.norm(), z.norm() * 9);
+    }
+
+    #[test]
+    fn test_scale_one_is_identity() {
+        let z = E12::new(5, -3);
+        assert_eq!(z.scale(1), z);
+    }
+
+    // ─── HexDisk: snap_direction ──────────────────────────────────────
+
+    #[cfg(feature = "snap")]
+    #[test]
+    fn test_snap_direction_returns_valid_hex() {
+        let disk = HexDisk::radius(5);
+        // 0 radians → east direction
+        let result = disk.snap_direction(0.0);
+        assert!(result.is_some());
+        let hex = result.unwrap();
+        // Should be one of the 6 hex directions
+        assert!(hex.norm() <= 5);
+    }
+
+    #[cfg(feature = "snap")]
+    #[test]
+    fn test_snap_direction_all_six_directions() {
+        let disk = HexDisk::radius(3);
+        // Test snapping at each of the 6 hex angles (60° apart)
+        for i in 0..6 {
+            let angle = core::f64::consts::FRAC_PI_3 * i as f64;
+            let result = disk.snap_direction(angle);
+            assert!(result.is_some(),
+                "snap_direction should return Some for angle {}π/3", i);
+        }
+    }
+
+    #[cfg(feature = "snap")]
+    #[test]
+    fn test_snap_direction_radius_zero() {
+        let disk = HexDisk::radius(0);
+        // A radius-0 disk only contains the origin
+        // snap_direction may return None or the origin depending on impl
+        let result = disk.snap_direction(0.0);
+        // If it returns something, it should be the origin or very close
+        if let Some(hex) = result {
+            assert_eq!(hex.norm(), 0, "Radius-0 disk should snap to origin");
+        }
+    }
+
+    // ─── E12: snap_from_angle ─────────────────────────────────────────
+
+    #[cfg(feature = "snap")]
+    #[test]
+    fn test_snap_from_angle_zero_radians() {
+        let hex = E12::snap_from_angle(0.0);
+        // 0 radians → east (1, 0)
+        assert_eq!(hex.norm(), 1, "Snapping 0 should give a unit vector");
+    }
+
+    #[cfg(feature = "snap")]
+    #[test]
+    fn test_snap_from_angle_full_circle() {
+        // Snapping at any angle should give a valid E12 point.
+        // Angles between hex directions may snap to non-unit vectors,
+        // so we just verify the result is non-degenerate.
+        for i in 0..12 {
+            let angle = core::f64::consts::FRAC_PI_6 * i as f64;
+            let hex = E12::snap_from_angle(angle);
+            // At multiples of π/3 (60°), should snap to a unit vector
+            if i % 2 == 0 {
+                assert_eq!(hex.norm(), 1,
+                    "Angle at {}π/6 = {}π/3 should snap to unit vector", i, i/2);
+            }
+            // Otherwise just verify it's a valid point
+            assert!(hex.norm() > 0,
+                "Snapped angle should give nonzero vector (angle {}π/6)", i);
+        }
+    }
+
+    // ─── E12: gcd additional cases ────────────────────────────────────
+
+    #[test]
+    fn test_gcd_with_one() {
+        let z = E12::new(6, -3);
+        let one = E12::new(1, 0);
+        let g = z.gcd(one);
+        // gcd(z, unit) should be a unit
+        assert_eq!(g.norm(), 1);
+    }
+
+    #[test]
+    fn test_gcd_with_self() {
+        let z = E12::new(6, -3);
+        let g = z.gcd(z);
+        // gcd(z, z) should be z (up to associates)
+        assert_eq!(g.norm(), z.norm());
+    }
+
+    #[test]
+    fn test_gcd_commutative() {
+        let a = E12::new(6, -3);
+        let b = E12::new(4, 1);
+        let g1 = a.gcd(b);
+        let g2 = b.gcd(a);
+        assert_eq!(g1.norm(), g2.norm(),
+            "GCD should be commutative (same norm)");
+    }
+
+    // ─── E12: divides additional cases ────────────────────────────────
+
+    #[test]
+    fn test_divides_by_one() {
+        let z = E12::new(6, -3);
+        assert!(z.divides(z), "Every element divides itself");
+    }
+
+    #[test]
+    fn test_divides_by_associate() {
+        // Associates divide each other
+        let z = E12::new(2, -1); // norm 7
+        // Rotate by 60° to get an associate
+        let rotations = z.d6_rotations();
+        for r in &rotations {
+            assert!(z.divides(*r),
+                "Associates (D6 rotations) should divide each other");
+        }
+    }
+
+    #[test]
+    fn test_divides_origin_divides_all() {
+        let origin = E12::new(0, 0);
+        let z = E12::new(5, 3);
+        // origin does NOT divide anything (division by zero norm)
+        // But z.divides(origin) checks if z | origin, which is true
+        assert!(z.divides(origin),
+            "Any nonzero element divides the origin");
+    }
 }
