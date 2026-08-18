@@ -6,7 +6,7 @@
 **Domain:** constraint-theory
 **Depends on:** —
 **Depended by:** flux-lucid, constraint-theory-ecosystem
-**Implements:** zero-drift-arithmetic, hexagonal-lattice
+**Implements:** zero-drift-arithmetic, hexagonal-lattice, hex-room-maps
 **Related:** eisenstein-c, eisenstein-wasm, eisenstein-bench
 
 
@@ -33,6 +33,13 @@ This crate compiles on rustc 1.75.0+, runs on bare metal, and doesn't pull in a 
 **`EisensteinTriple`** — parametric generator `(m²-n², 2mn-n², m²-mn+n²)`. Produces Eisenstein integer triples with guaranteed norm multiplicativity. D₆ Weyl orbit invariance holds for all parameters.
 
 **Angle snapping** — optional feature (`snap`). Snap floating-point angles to exact Eisenstein directions. Requires `libm` (still `no_std` compatible).
+
+**`HexRoomMap`** — the MUD as an Eisenstein lattice. Rooms placed at hex
+coordinates, six D₆ neighbors per hex, true hex distance, hex-BFS paths,
+hex disks, and the elephant seam: the map's aggregate field
+(`map_temperature`) and the terrain's deadband (`deadband_ring`) that rings
+when a region of the map crosses a threshold — a war spreading through the
+hexes. See [docs/hex-room-map.md](docs/hex-room-map.md).
 
 ## Quick start
 
@@ -67,6 +74,40 @@ Every property listed here has been verified through multiple methods — unit t
 | O(V) holonomy check | Benchmarked | ~0.0009ms/vertex constant |
 
 For the exhaustive fuzzing results, see [eisenstein-fuzz](https://github.com/SuperInstance/eisenstein-fuzz). For benchmarks on your own hardware, see [eisenstein-bench](https://github.com/SuperInstance/eisenstein-bench).
+
+## The MUD as a lattice
+
+A MUD world map is a hex grid, and Eisenstein integers *are* the hex grid:
+ every room is a hex center `a + bω`, and the D₆ units `±1, ±ω, ±ω²` are its
+ six neighbors — six neighbors, not eight. Distance on the map is the true
+ hex distance (an exact integer lattice metric, never squared-Euclidean,
+ never a float). The elephant reads each room's field; when a region of the
+ map crosses the deadband, the terrain rings the war's region up the chain.
+
+```mermaid
+graph LR
+    A[hex coordinates<br/>(a, b) = a + bω] --> B[HexRoomMap]
+    B --> C[neighbors<br/>6 D₆ units]
+    B --> D[distance<br/>true hex distance]
+    B --> E[path<br/>hex BFS over rooms]
+    B --> F[region<br/>hex disk 3R²+3R+1]
+    B --> G[RoomField per room<br/>the elephant's reading]
+    G --> H[map field<br/>map_temperature / map_panic]
+    H --> I{deadband_ring<br/>map_field crosses threshold?}
+    I -->|no| J[quiet — stable map]
+    I -->|yes| K[⚡ Ring naming<br/>the spreading region]
+```
+
+![Hex room map — the honeycomb city](assets/images/hex-room-map.png)
+
+A room catches fire in the Alley; its field crosses the band; the ring names
+the connected region the panic has reached, and the elephant's real dials
+read the rooms through `bridge/hex_room_map.py`. Run it yourself:
+
+```sh
+cargo run --example hex_mud                 # the story, in the terminal
+cargo run --example hex_mud -- --json | python3 bridge/hex_room_map.py --map /dev/stdin
+```
 
 ## Applications
 

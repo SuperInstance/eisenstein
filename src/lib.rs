@@ -2,6 +2,13 @@
 
 //! Zero-drift hexagonal lattice constraints via Eisenstein integers.
 //!
+//! ## The MUD as a lattice
+//!
+//! [`hex_room_map`] adds the map layer: rooms placed on the Eisenstein
+//! lattice, the elephant reading each room's field, and the terrain's
+//! deadband ringing when a region of the map crosses a threshold — a war
+//! spreading through the hexes.
+//!
 //! Exact integer arithmetic for safety-critical systems. Core type has zero
 //! dependencies and zero floats. Angle snapping (`snap` feature, default) adds
 //! libm for trig operations.
@@ -42,6 +49,10 @@
 //! let w = E12::new(1, 1);
 //! assert_eq!((z * w).norm(), z.norm() * w.norm());
 //! ```
+
+pub mod hex_room_map;
+
+pub use hex_room_map::{hex_directions, hex_distance, norm_distance, HexRoomMap, MapError, Ring, RoomField};
 
 #[cfg(feature = "snap")]
 use core::f64::consts;
