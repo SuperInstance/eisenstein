@@ -7,7 +7,7 @@
 //! [`hex_room_map`] adds the map layer: rooms placed on the Eisenstein
 //! lattice, the elephant reading each room's field, and the terrain's
 //! deadband ringing when a region of the map crosses a threshold — a war
-//! spreading through the hexes.
+//! spreading through the hexes, with the D₆ front it is moving along.
 //!
 //! Exact integer arithmetic for safety-critical systems. Core type has zero
 //! dependencies and zero floats. Angle snapping (`snap` feature, default) adds
@@ -52,7 +52,10 @@
 
 pub mod hex_room_map;
 
-pub use hex_room_map::{hex_directions, hex_distance, norm_distance, HexRoomMap, MapError, Ring, RoomField};
+pub use hex_room_map::{
+    front_direction, hex_directions, hex_distance, norm_distance, HexRoomMap, MapError, Ring,
+    RoomField,
+};
 
 #[cfg(feature = "snap")]
 use core::f64::consts;
@@ -168,12 +171,12 @@ impl E12 {
     /// | -ω²  | ( 1, 1) | ( 0.5,  0.87) | NW    |
     pub const fn directions() -> [E12; 6] {
         [
-            E12::new(1, 0),    // 1   (East)
-            E12::new(0, 1),    // ω   (NE)
-            E12::new(1, 1),    // -ω² (NW) — note: -ω² = 1+ω = (1,1)
-            E12::new(-1, 0),   // -1  (West)
-            E12::new(0, -1),   // -ω  (SE)
-            E12::new(-1, -1),  // ω²  (SW) — note: ω² = -1-ω = (-1,-1)
+            E12::new(1, 0),   // 1   (East)
+            E12::new(0, 1),   // ω   (NE)
+            E12::new(1, 1),   // -ω² (NW) — note: -ω² = 1+ω = (1,1)
+            E12::new(-1, 0),  // -1  (West)
+            E12::new(0, -1),  // -ω  (SE)
+            E12::new(-1, -1), // ω²  (SW) — note: ω² = -1-ω = (-1,-1)
         ]
     }
 }
@@ -251,13 +254,11 @@ impl HexDisk {
     pub fn snap_direction(&self, radians: f64) -> Option<E12> {
         let cos = float::cos(radians);
         let sin = float::sin(radians);
-        self.iter()
-            .filter(|p| p.a != 0 || p.b != 0)
-            .min_by(|a, b| {
-                let da = E12::angular_distance(*a, cos, sin);
-                let db = E12::angular_distance(*b, cos, sin);
-                da.partial_cmp(&db).unwrap_or(core::cmp::Ordering::Equal)
-            })
+        self.iter().filter(|p| p.a != 0 || p.b != 0).min_by(|a, b| {
+            let da = E12::angular_distance(*a, cos, sin);
+            let db = E12::angular_distance(*b, cos, sin);
+            da.partial_cmp(&db).unwrap_or(core::cmp::Ordering::Equal)
+        })
     }
 
     /// Check if a point is inside this disk.
@@ -385,7 +386,13 @@ impl EisensteinTriple {
         // a can exceed sqrt(target) because a² - ab + b² < a² when b > 0.
         let target_i = target as i64;
         let sqrt_target = int_sqrt(target_i);
-        let max_a = if target > 46340 { 46340 } else { ((sqrt_target * 2 + 1) as i32).min(target as i32).max(sqrt_target as i32) };
+        let max_a = if target > 46340 {
+            46340
+        } else {
+            ((sqrt_target * 2 + 1) as i32)
+                .min(target as i32)
+                .max(sqrt_target as i32)
+        };
         for a in 0..=max_a {
             let a_i = a as i64;
             for b in 0..=a {
@@ -409,7 +416,11 @@ impl EisensteinTriple {
         // So we need 3a²/4 ≤ target, i.e., a ≤ sqrt(4*target/3).
         // Use a generous bound: 2*sqrt(target) + 1.
         let sqrt_val = int_sqrt(target.max(0));
-        let max_a = if target > 46340 { 46340 } else { ((sqrt_val * 2 + 1) as i32).min(46340) };
+        let max_a = if target > 46340 {
+            46340
+        } else {
+            ((sqrt_val * 2 + 1) as i32).min(46340)
+        };
         for a in 0..=max_a {
             let a_i = a as i64;
             for b in 0..=a {
@@ -430,7 +441,11 @@ impl EisensteinTriple {
         // a can exceed c_max because a² - ab + b² < a² when b > 0.
         // Safe upper bound: a² ≤ c_max² * 4/3 (since min norm for given a is ~3a²/4).
         // Use c_max * 2 as a generous bound.
-        let max_a = if c_max > 23058 { 46340 } else { (c_max * 2) as i32 };
+        let max_a = if c_max > 23058 {
+            46340
+        } else {
+            (c_max * 2) as i32
+        };
         for a in 0..=max_a {
             let a_i = a as i64;
             for b in 0..=a {
@@ -460,7 +475,8 @@ impl EisensteinTriple {
         let mut a: i32 = 1;
         while results.len() < n {
             for b in 0..=a {
-                let val = (a as i64) * (a as i64) - (a as i64) * (b as i64) + (b as i64) * (b as i64);
+                let val =
+                    (a as i64) * (a as i64) - (a as i64) * (b as i64) + (b as i64) * (b as i64);
                 if val > 1 {
                     let sqrt_val = int_sqrt(val);
                     if sqrt_val * sqrt_val == val && sqrt_val > 1 {
@@ -559,11 +575,11 @@ impl E12 {
     /// ```
     pub fn d6_rotations(self) -> [E12; 6] {
         let r0 = self;
-        let r1 = E12::new(-self.b, self.a - self.b);   // 60°
-        let r2 = E12::new(self.b - self.a, -self.a);    // 120°
-        let r3 = E12::new(-self.a, -self.b);            // 180°
-        let r4 = E12::new(self.b, -self.a + self.b);    // 240°
-        let r5 = E12::new(self.a - self.b, self.a);     // 300°
+        let r1 = E12::new(-self.b, self.a - self.b); // 60°
+        let r2 = E12::new(self.b - self.a, -self.a); // 120°
+        let r3 = E12::new(-self.a, -self.b); // 180°
+        let r4 = E12::new(self.b, -self.a + self.b); // 240°
+        let r5 = E12::new(self.a - self.b, self.a); // 300°
         [r0, r1, r2, r3, r4, r5]
     }
 
@@ -724,7 +740,7 @@ impl E12 {
         let qa = round_div(numer.a as i64, n);
         let qb = round_div(numer.b as i64, n);
 
-        let quotient = E12::new(qa as i32, qb as i32);
+        let quotient = E12::new(qa, qb);
         let remainder = self - divisor * quotient;
 
         Some((quotient, remainder))
@@ -785,7 +801,9 @@ impl E12 {
 
 /// Round a/b to the nearest integer (rounding halves toward zero).
 fn round_div(a: i64, b: i64) -> i32 {
-    if b == 0 { return 0; }
+    if b == 0 {
+        return 0;
+    }
     let sign = if (a < 0) ^ (b < 0) { -1i64 } else { 1i64 };
     let abs_a = a.abs();
     let abs_b = b.abs();
@@ -868,9 +886,15 @@ mod tests {
 
         // Non-trivial: (8, 3, 7) since 64-24+9 = 49 = 7²
         let all = EisensteinTriple::all_with_max_norm(10);
-        let nontrivial: alloc::vec::Vec<_> = all.iter().filter(|t| t.a() > 0 && t.b() > 0).collect();
-        assert!(nontrivial.iter().any(|t| t.a() == 8 && t.b() == 3 && t.c() == 7),
-            "Should find (8,3,7) in non-trivial triples: {:?}", nontrivial);
+        let nontrivial: alloc::vec::Vec<_> =
+            all.iter().filter(|t| t.a() > 0 && t.b() > 0).collect();
+        assert!(
+            nontrivial
+                .iter()
+                .any(|t| t.a() == 8 && t.b() == 3 && t.c() == 7),
+            "Should find (8,3,7) in non-trivial triples: {:?}",
+            nontrivial
+        );
     }
 
     #[test]
@@ -901,11 +925,41 @@ mod tests {
             let r4 = E12::new(b, -a + b);
             let r5 = E12::new(a - b, a);
 
-            assert_eq!(p.norm(), r1.norm(), "D6 rotation 1 failed for ({},{})", a, b);
-            assert_eq!(p.norm(), r2.norm(), "D6 rotation 2 failed for ({},{})", a, b);
-            assert_eq!(p.norm(), r3.norm(), "D6 rotation 3 failed for ({},{})", a, b);
-            assert_eq!(p.norm(), r4.norm(), "D6 rotation 4 failed for ({},{})", a, b);
-            assert_eq!(p.norm(), r5.norm(), "D6 rotation 5 failed for ({},{})", a, b);
+            assert_eq!(
+                p.norm(),
+                r1.norm(),
+                "D6 rotation 1 failed for ({},{})",
+                a,
+                b
+            );
+            assert_eq!(
+                p.norm(),
+                r2.norm(),
+                "D6 rotation 2 failed for ({},{})",
+                a,
+                b
+            );
+            assert_eq!(
+                p.norm(),
+                r3.norm(),
+                "D6 rotation 3 failed for ({},{})",
+                a,
+                b
+            );
+            assert_eq!(
+                p.norm(),
+                r4.norm(),
+                "D6 rotation 4 failed for ({},{})",
+                a,
+                b
+            );
+            assert_eq!(
+                p.norm(),
+                r5.norm(),
+                "D6 rotation 5 failed for ({},{})",
+                a,
+                b
+            );
         }
     }
 
@@ -917,7 +971,9 @@ mod tests {
         // Simple deterministic "random" sequence
         let mut state: u64 = 12345;
         let mut next_small = || -> i32 {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             ((state >> 40) & 0x3FF) as i32 - 512 // range [-512, 511]
         };
 
@@ -941,9 +997,13 @@ mod tests {
             // Only check if no overflow occurred
             if norm_a < (1u64 << 31) && norm_b < (1u64 << 31) {
                 assert_eq!(
-                    norm_ab, norm_a * norm_b,
+                    norm_ab,
+                    norm_a * norm_b,
                     "Norm multiplicativity failed for ({},{}) * ({},{})",
-                    a.a(), a.b(), b.a(), b.b()
+                    a.a(),
+                    a.b(),
+                    b.a(),
+                    b.b()
                 );
             }
         }
@@ -984,8 +1044,12 @@ mod tests {
         // Verify: alpha = beta * q + r
         assert_eq!(beta * q + r, alpha);
         // Remainder should have smaller norm
-        assert!(r.norm() < beta.norm() || (r.a == 0 && r.b == 0),
-            "Remainder norm {} >= divisor norm {}", r.norm(), beta.norm());
+        assert!(
+            r.norm() < beta.norm() || (r.a == 0 && r.b == 0),
+            "Remainder norm {} >= divisor norm {}",
+            r.norm(),
+            beta.norm()
+        );
     }
 
     #[test]
@@ -1007,23 +1071,38 @@ mod tests {
         // For many random pairs, verify N(remainder) < N(divisor)
         let mut state: u64 = 42;
         let mut next_small = || -> i32 {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             ((state >> 40) & 0xF) as i32 - 8 // range [-8, 7]
         };
 
         for _ in 0..1000 {
             let a = E12::new(next_small(), next_small());
             let b = E12::new(next_small(), next_small());
-            if b.a == 0 && b.b == 0 { continue; }
+            if b.a == 0 && b.b == 0 {
+                continue;
+            }
             if let Some((q, r)) = a.div_rem(b) {
                 // Verify reconstruction
-                assert_eq!(b * q + r, a,
+                assert_eq!(
+                    b * q + r,
+                    a,
                     "Reconstruction failed: {} * {} + {} != {}",
-                    b, q, r, a);
+                    b,
+                    q,
+                    r,
+                    a
+                );
                 // Verify Euclidean property
-                assert!(r.norm() < b.norm() || (r.a == 0 && r.b == 0),
+                assert!(
+                    r.norm() < b.norm() || (r.a == 0 && r.b == 0),
                     "N(rem)={} >= N(div)={} for {} / {}",
-                    r.norm(), b.norm(), a, b);
+                    r.norm(),
+                    b.norm(),
+                    a,
+                    b
+                );
             }
         }
     }
@@ -1095,8 +1174,7 @@ mod tests {
     fn test_d6_rotations_norm_preserved() {
         let p = E12::new(7, -3);
         for rot in p.d6_rotations() {
-            assert_eq!(rot.norm(), p.norm(),
-                "D6 rotation should preserve norm");
+            assert_eq!(rot.norm(), p.norm(), "D6 rotation should preserve norm");
         }
     }
 
@@ -1136,7 +1214,12 @@ mod tests {
     fn test_snap_from_angle_west() {
         // π → West → (-1, 0)
         let z = E12::snap_from_angle(consts::PI);
-        assert_eq!(z, E12::new(-1, 0), "West should snap to (-1,0), got {:?}", z);
+        assert_eq!(
+            z,
+            E12::new(-1, 0),
+            "West should snap to (-1,0), got {:?}",
+            z
+        );
     }
 
     #[test]
@@ -1171,11 +1254,32 @@ mod tests {
     #[cfg(feature = "snap")]
     fn test_snap_from_angle_hex_unit_directions() {
         // The 6 hex unit directions (0°, 60°, 120°, 180°, 240°, 300°) should snap to unit-norm E12
-        let hex_angles = [0.0, consts::FRAC_PI_3, 2.0*consts::FRAC_PI_3, consts::PI, 4.0*consts::FRAC_PI_3, 5.0*consts::FRAC_PI_3];
-        let expected = [E12::new(1,0), E12::new(1,1), E12::new(0,1), E12::new(-1,0), E12::new(-1,-1), E12::new(0,-1)];
+        let hex_angles = [
+            0.0,
+            consts::FRAC_PI_3,
+            2.0 * consts::FRAC_PI_3,
+            consts::PI,
+            4.0 * consts::FRAC_PI_3,
+            5.0 * consts::FRAC_PI_3,
+        ];
+        let expected = [
+            E12::new(1, 0),
+            E12::new(1, 1),
+            E12::new(0, 1),
+            E12::new(-1, 0),
+            E12::new(-1, -1),
+            E12::new(0, -1),
+        ];
         for (angle, exp) in hex_angles.iter().zip(expected.iter()) {
             let z = E12::snap_from_angle(*angle);
-            assert_eq!(z, *exp, "Angle {}° should snap to {:?}, got {:?}", angle * 180.0 / consts::PI, exp, z);
+            assert_eq!(
+                z,
+                *exp,
+                "Angle {}° should snap to {:?}, got {:?}",
+                angle * 180.0 / consts::PI,
+                exp,
+                z
+            );
         }
     }
 
@@ -1220,15 +1324,32 @@ mod tests {
     fn test_hex_disk_snap_vs_e12_snap_hex_directions() {
         // For the 6 hex directions, disk and E12 snap should agree
         let disk = HexDisk::radius(36);
-        let hex_angles = [0.0, consts::FRAC_PI_3, 2.0*consts::FRAC_PI_3, consts::PI, 4.0*consts::FRAC_PI_3, 5.0*consts::FRAC_PI_3];
+        let hex_angles = [
+            0.0,
+            consts::FRAC_PI_3,
+            2.0 * consts::FRAC_PI_3,
+            consts::PI,
+            4.0 * consts::FRAC_PI_3,
+            5.0 * consts::FRAC_PI_3,
+        ];
         for angle in hex_angles {
             let disk_z = disk.snap_direction(angle).unwrap();
             let e12_z = E12::snap_from_angle(angle);
             // Disk may pick a different representative within radius, but angle should be very close
             let disk_ang = E12::angular_distance(disk_z, float::cos(angle), float::sin(angle));
             let e12_ang = E12::angular_distance(e12_z, float::cos(angle), float::sin(angle));
-            assert!(disk_ang < 0.01, "Disk snap at {}° has angular diff {}", angle * 180.0 / consts::PI, disk_ang);
-            assert!(e12_ang < 0.01, "E12 snap at {}° has angular diff {}", angle * 180.0 / consts::PI, e12_ang);
+            assert!(
+                disk_ang < 0.01,
+                "Disk snap at {}° has angular diff {}",
+                angle * 180.0 / consts::PI,
+                disk_ang
+            );
+            assert!(
+                e12_ang < 0.01,
+                "E12 snap at {}° has angular diff {}",
+                angle * 180.0 / consts::PI,
+                e12_ang
+            );
         }
     }
 
@@ -1369,14 +1490,24 @@ mod tests {
         assert_eq!(triples.len(), 5);
         // All should be primitive
         for t in &triples {
-            assert!(t.is_primitive(), "Generated triple {:?} should be primitive", t);
+            assert!(
+                t.is_primitive(),
+                "Generated triple {:?} should be primitive",
+                t
+            );
         }
         // All should satisfy a² - ab + b² = c²
         for t in &triples {
             let norm_val = E12::new(t.a(), t.b()).norm();
             let c_sq = (t.c() as u64) * (t.c() as u64);
-            assert_eq!(norm_val, c_sq,
-                "Triple ({}, {}, {}) does not satisfy norm = c²", t.a(), t.b(), t.c());
+            assert_eq!(
+                norm_val,
+                c_sq,
+                "Triple ({}, {}, {}) does not satisfy norm = c²",
+                t.a(),
+                t.b(),
+                t.c()
+            );
         }
     }
 
@@ -1398,8 +1529,12 @@ mod tests {
     fn test_all_with_max_norm() {
         let triples = EisensteinTriple::all_with_max_norm(7);
         // Should include (7, 0, 7) and (8, 3, 7)
-        assert!(triples.iter().any(|t| t.a() == 7 && t.b() == 0 && t.c() == 7));
-        assert!(triples.iter().any(|t| t.a() == 8 && t.b() == 3 && t.c() == 7));
+        assert!(triples
+            .iter()
+            .any(|t| t.a() == 7 && t.b() == 0 && t.c() == 7));
+        assert!(triples
+            .iter()
+            .any(|t| t.a() == 8 && t.b() == 3 && t.c() == 7));
         // All c values should be <= 7
         for t in &triples {
             assert!(t.c() <= 7);
@@ -1500,8 +1635,7 @@ mod tests {
         // (1,1), (-1,-1) have hex_distance 2
         // This is because hex_distance = (|a|+|b|+|a+b|)/2
         for dir in E12::directions() {
-            assert_eq!(dir.norm(), 1,
-                "Direction {:?} should have norm 1", dir);
+            assert_eq!(dir.norm(), 1, "Direction {:?} should have norm 1", dir);
         }
         // Explicitly check hex distances
         assert_eq!(E12::new(1, 0).hex_distance(), 1);
@@ -1549,7 +1683,14 @@ mod tests {
         for n in z.neighbors() {
             // All neighbors differ by a unit direction (norm 1)
             let diff = z - n;
-            assert_eq!(diff.norm(), 1, "Neighbor {:?} differs by {:?} (norm {}), expected norm 1", n, diff, diff.norm());
+            assert_eq!(
+                diff.norm(),
+                1,
+                "Neighbor {:?} differs by {:?} (norm {}), expected norm 1",
+                n,
+                diff,
+                diff.norm()
+            );
         }
     }
 

@@ -11,8 +11,10 @@ Rust mirror computes:
     map_temperature(fields)   — the grid's aggregate field (mean warmth)
     deadband_ring(fields, …)  — the terrain's deadband: when the map's field
                                 crosses a threshold (a panic spreading), the
-                                ring names the region that crossed; on a
-                                stable map, nothing rings.
+                                ring names the region that crossed and, given
+                                the previous ring's region, the D₆ front the
+                                fight is moving along; on a stable map,
+                                nothing rings.
 
 If the elephant is importable (via `ELEPHANT_ROOT` env or the `../elephant`
 sibling directory), its real `RoomField` and dials are used — each room with
@@ -77,6 +79,37 @@ def hex_distance(a: Tuple[int, int], b: Tuple[int, int]) -> int:
     """True hex distance: the minimal number of D₆ unit steps."""
     da, db = a[0] - b[0], a[1] - b[1]
     return max(abs(da), abs(db), abs(da - db))
+
+
+def front_direction(previous: List[Tuple[int, int]],
+                    current: List[Tuple[int, int]]) -> Optional[Tuple[int, int]]:
+    """The D₆ direction a region moved along — the fight's front.
+
+    Exact mirror of the Rust `front_direction`: the integer centroid
+    displacement between two frames of the montage, snapped to the nearest
+    of the six units (maximizing 2·Re(D·conj(u)) = 2xa − xb − ya + 2yb —
+    integer arithmetic, no trig). Ties break to the first unit in
+    HEX_DIRECTIONS order, same as Rust. None when either frame is empty or
+    the region did not move (a settled blaze is not a montage).
+    """
+    if not previous or not current:
+        return None
+    n_prev, n_curr = len(previous), len(current)
+    sa = sum(c[0] for c in previous)
+    sb = sum(c[1] for c in previous)
+    ca = sum(c[0] for c in current)
+    cb = sum(c[1] for c in current)
+    dx = ca * n_prev - sa * n_curr
+    dy = cb * n_prev - sb * n_curr
+    if dx == 0 and dy == 0:
+        return None
+    best: Optional[Tuple[int, int]] = None
+    best_align: Optional[int] = None
+    for a, b in HEX_DIRECTIONS:
+        align = 2 * dx * a - dx * b - dy * a + 2 * dy * b
+        if best_align is None or align > best_align:
+            best, best_align = (a, b), align
+    return best
 
 
 # ---------------------------------------------------------------------- #
@@ -166,13 +199,19 @@ def map_panic(fields: Dict[Tuple[int, int], object]) -> Optional[float]:
 
 
 def deadband_ring(fields: Dict[Tuple[int, int], object], map_field: float,
-                  threshold: float) -> Optional[Dict]:
+                  threshold: float,
+                  previous: Optional[List[Tuple[int, int]]] = None) -> Optional[Dict]:
     """The terrain's deadband: ring when the map's field crosses the band.
 
     Mirrors the Rust `HexRoomMap::deadband_ring` exactly: quiet below the
     threshold; when crossed, the ring names the largest connected region of
     read rooms whose own panic also crossed; if no single room crossed but
     the aggregate did, the ring names every read room.
+
+    Propagation-aware, like the Rust side: pass the previous ring's `coords`
+    as `previous` (the Rust map remembers its last blaze internally; this
+    function is stateless, so the montage's two frames are given explicitly)
+    and the ring carries a `front` — the D₆ unit the region moved along.
     """
     if threshold < 0 or abs(map_field) < threshold:
         return None
@@ -204,6 +243,7 @@ def deadband_ring(fields: Dict[Tuple[int, int], object], map_field: float,
     return {
         "coords": coords,
         "center": coords[0],
+        "front": front_direction(previous or [], coords),
         "map_field": map_field,
         "threshold": threshold,
     }

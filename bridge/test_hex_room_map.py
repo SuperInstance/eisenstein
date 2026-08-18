@@ -14,6 +14,7 @@ import pytest
 from hex_room_map import (
     ELEPHANT,
     deadband_ring,
+    front_direction,
     hex_distance,
     hex_neighbors,
     map_panic,
@@ -157,3 +158,72 @@ def test_aggregate_crosses_but_no_room_does():
     ring = deadband_ring(fields, 0.6, 0.5)
     assert ring is not None
     assert len(ring["coords"]) == 3
+
+
+def test_front_direction_agrees_with_the_rust_map():
+    # The same cases the Rust unit test asserts — both sides snap the
+    # centroid displacement to the same D₆ unit, by the same exact formula.
+    assert front_direction([(0, 0)], [(0, 0), (1, 0)]) == (1, 0)        # east: 1
+    assert front_direction([(0, 0)], [(0, 0), (0, 1)]) == (0, 1)        # ω
+    assert front_direction([(1, 0)], [(1, 0), (0, 0)]) == (-1, 0)       # −1
+    assert front_direction([(0, 0)], [(0, 0), (-1, -1)]) == (-1, -1)    # ω²
+    assert front_direction([(0, 0), (1, 0)],
+                           [(0, 0), (1, 0), (2, 0)]) == (1, 0)
+    # The turn north-east mid-march: displacement (3,3) -> the unit 1+ω.
+    assert front_direction([(0, 0), (1, 0), (2, 0)],
+                           [(0, 0), (1, 0), (2, 0), (2, 1)]) == (1, 1)
+    # Settled or empty: no front.
+    assert front_direction([(0, 0), (1, 0)], [(0, 0), (1, 0)]) is None
+    assert front_direction([], [(0, 0)]) is None
+    assert front_direction([(0, 0)], []) is None
+
+
+def test_ring_names_the_region_and_the_front_of_a_migrating_fight():
+    # The montage: a fight seeded at one hex, migrating hex-by-hex. The Rust
+    # map remembers its last blaze internally; the bridge takes both frames
+    # explicitly (`previous`) — same quantities, same numbers.
+    def room(c, panic):
+        return {"coord": list(c), "name": f"town-{c[0]}{c[1]}",
+                "field": {"mood": 0.0, "volume": 0.5, "earnestness": 0.5,
+                          "cynicism": 0.5, "joke_landing": 0.0,
+                          "panic": panic, "presence": 0.5}}
+
+    calm = lambda: {"map": "town", "rooms": [room(c, 0.05) for c in [
+        (0, 0), (1, 0), (2, 0), (2, 1), (0, 1), (-1, 0)]]}
+
+    def fields_with(panics):
+        data = calm()
+        for c, p in panics.items():
+            for r in data["rooms"]:
+                if tuple(r["coord"]) == c:
+                    r["field"]["panic"] = p
+        return room_fields(data)
+
+    # Frame 1: seeded at one hex. First frame of the montage: no front.
+    fields = fields_with({(0, 0): 0.9})
+    r1 = deadband_ring(fields, 0.9, 0.5)
+    assert r1["coords"] == [(0, 0)]
+    assert r1["front"] is None
+
+    # Frame 2: propagates east — the ring names the connected region and
+    # the front is the D₆ unit 1.
+    fields = fields_with({(0, 0): 0.9, (1, 0): 0.9})
+    r2 = deadband_ring(fields, 0.9, 0.5, previous=r1["coords"])
+    assert set(r2["coords"]) == {(0, 0), (1, 0)}
+    assert r2["front"] == (1, 0)
+
+    # Frames 3-4: keeps moving east, then turns north-east — the front
+    # follows, exactly as the Rust integration test asserts.
+    fields = fields_with({(0, 0): 0.9, (1, 0): 0.9, (2, 0): 0.9})
+    r3 = deadband_ring(fields, 0.9, 0.5, previous=r2["coords"])
+    assert len(r3["coords"]) == 3
+    assert r3["front"] == (1, 0)
+
+    fields = fields_with({(0, 0): 0.9, (1, 0): 0.9, (2, 0): 0.9, (2, 1): 0.9})
+    r4 = deadband_ring(fields, 0.9, 0.5, previous=r3["coords"])
+    assert len(r4["coords"]) == 4
+    assert r4["front"] == (1, 1)
+
+    # Settled: a standing fire is not a montage.
+    r5 = deadband_ring(fields, 0.9, 0.5, previous=r4["coords"])
+    assert r5["front"] is None

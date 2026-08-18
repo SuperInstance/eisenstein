@@ -63,23 +63,21 @@ fn main() {
 
     // ── Bridge input for the real elephant ───────────────────────────────
     //
-    // The Rust map does not expose per-room fields read-back (they are
-    // written through `set_field`), so the bridge input re-derives the
-    // readings from the same table used above. The Python bridge then runs
-    // the REAL elephant dials over each room's events when available, and
-    // falls back to these mirrored readings otherwise.
+    // The map reads its fields back through `fields()` — the read-back twin
+    // of `set_field`, the same seam roomd pushes field updates through. The
+    // Python bridge runs the REAL elephant dials over each room's events
+    // when available, and falls back to these mirrored readings otherwise.
     if as_json {
+        // The same state the story will reach below: fire in the Alley has
+        // reached the Tap, the Docks, and the Smithy. Apply it first so the
+        // export and the story agree.
+        for c in [(1, 1), (0, 0), (1, 0), (2, 1)] {
+            map.set_field(c, field(0.9)).expect("room exists");
+        }
         let mut json = String::from("{\"map\":\"the-tap-town\",\"rooms\":[");
         let mut sep = "";
-        for (c, name) in map.iter() {
-            // The same state the story left the town in: fire in the Alley
-            // has reached the Tap, the Docks, and the Smithy.
-            let f = match name {
-                "The Tap" | "the Docks" | "the Alley" | "the Smithy" => field(0.9),
-                "the Temple" => field(0.0),
-                "the Lighthouse" => RoomField::new(0.0, 0.5, 0.5, 0.7, 0.0, 0.0, 0.5),
-                _ => field(0.05),
-            };
+        for (c, f) in map.fields() {
+            let name = map.get(c).expect("every field belongs to a room");
             json.push_str(&format!(
                 "{} {{\"coord\":[{},{}],\"name\":\"{}\",\"field\":{{\"mood\":{},\"volume\":{},\"earnestness\":{},\"cynicism\":{},\"joke_landing\":{},\"panic\":{},\"presence\":{}}}}}",
                 sep, c.0, c.1, esc(name), f.mood, f.volume, f.earnestness, f.cynicism,
@@ -119,7 +117,10 @@ fn main() {
         map.map_panic().unwrap_or(f64::NAN)
     );
     if let Some(ring) = map.deadband_ring(0.7, 0.5) {
-        println!("⚡ THE DEADBAND RINGS — {} rooms on fire:", ring.coords.len());
+        println!(
+            "⚡ THE DEADBAND RINGS — {} rooms on fire:",
+            ring.coords.len()
+        );
         for name in &ring.region {
             println!("    - {}", name);
         }
@@ -127,8 +128,22 @@ fn main() {
             "  ring center: {:?}  (map field {:.2} ≥ threshold {:.2})",
             ring.center, ring.map_field, ring.threshold
         );
+        if ring.front.is_none() {
+            println!("  front: none yet — the first frame of the montage");
+        }
     } else {
         println!("deadband: quiet");
+    }
+    // The fight migrates east, hex by hex: the ring names the region AND
+    // the front — the D₆ unit the fire is moving along.
+    map.set_field((2, 0), field(0.9)).expect("room exists"); // the Keep catches
+    if let Some(ring) = map.deadband_ring(0.9, 0.5) {
+        match ring.front {
+            Some((a, b)) => {
+                println!("  the front moves {a:+}{b:+}ω — the fire is heading that way")
+            }
+            None => println!("  the fire is standing still"),
+        }
     }
     // The Temple stays calm and unreachable from the blaze: no path through
     // burning hexes because every hex between is a room that has not lit yet.

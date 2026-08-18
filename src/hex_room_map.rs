@@ -15,6 +15,10 @@
 //! - **map_temperature** and **deadband_ring** are the elephant seam: the
 //!   aggregate field over the rooms, and the terrain's deadband ringing when a
 //!   region of the map crosses a threshold (a war spreading through the hexes).
+//!   The ring is **propagation-aware**: it remembers the last region it named,
+//!   so a fight migrating hex-by-hex reads as a montage sequence with a
+//!   **front** — the D₆ unit the region moved along ([`front_direction`]),
+//!   exact integer arithmetic, not a set of isolated rooms.
 //!
 //! # The elephant seam
 //!
@@ -110,6 +114,74 @@ pub fn norm_distance(a: (i64, i64), b: (i64, i64)) -> Option<u64> {
     } else {
         Some(n as u64)
     }
+}
+
+/// The front of a spreading fight — the D₆ direction a region moved along.
+///
+/// A fight migrating hex-by-hex is a montage sequence, and the front is the
+/// direction the region travels between two frames of it. Each frame is just
+/// the list of hex coordinates the ring named (the region now, and the region
+/// the ring named last time); the front is the D₆ unit nearest the
+/// displacement between the frames' centroids — exact integer arithmetic, no
+/// trig, no drift.
+///
+/// Concretely, with sums `S_prev`, `S_curr` and counts `n_prev`, `n_curr`,
+/// the displacement is `D = S_curr·n_prev − S_prev·n_curr` — an integer
+/// vector parallel to `centroid(curr) − centroid(prev)` (scaled by
+/// `n_prev·n_curr`, which preserves direction). The front is the unit
+/// `u ∈ {±1, ±ω, ±ω²}` maximizing `2·Re(D·conj(u))`, i.e.
+/// `2x·a − x·b − y·a + 2y·b` for `D = (x, y)` — the unit nearest `D` on the
+/// standard embedding, computed exactly. Ties (a displacement exactly between
+/// two units) break to the first unit in [`hex_directions`] order:
+/// deterministic, like every tie in this crate.
+///
+/// `None` when either frame is empty, when the displacement is zero (a
+/// settled blaze is not moving — no montage, no front), or when the sums
+/// overflow (impossible for any coordinate a map can hold).
+pub fn front_direction(previous: &[(i64, i64)], current: &[(i64, i64)]) -> Option<(i64, i64)> {
+    if previous.is_empty() || current.is_empty() {
+        return None;
+    }
+    let mut prev = (0i128, 0i128, 0i128); // (Σa, Σb, n)
+    for &(a, b) in previous {
+        prev.0 = prev.0.checked_add(a as i128)?;
+        prev.1 = prev.1.checked_add(b as i128)?;
+        prev.2 += 1;
+    }
+    let mut curr = (0i128, 0i128, 0i128);
+    for &(a, b) in current {
+        curr.0 = curr.0.checked_add(a as i128)?;
+        curr.1 = curr.1.checked_add(b as i128)?;
+        curr.2 += 1;
+    }
+    // D = S_curr·n_prev − S_prev·n_curr  ∥  centroid(curr) − centroid(prev)
+    let dx = curr
+        .0
+        .checked_mul(prev.2)?
+        .checked_sub(prev.0.checked_mul(curr.2)?)?;
+    let dy = curr
+        .1
+        .checked_mul(prev.2)?
+        .checked_sub(prev.1.checked_mul(curr.2)?)?;
+    if dx == 0 && dy == 0 {
+        return None;
+    }
+    let mut best = None;
+    let mut best_align = i128::MIN;
+    for &(a, b) in hex_directions().iter() {
+        // 2·Re(D·conj(u)) = 2x·a − x·b − y·a + 2y·b, exact in integers.
+        let (a, b) = (a as i128, b as i128);
+        let align = dx
+            .checked_mul(a.checked_mul(2)?)?
+            .checked_sub(dx.checked_mul(b)?)?
+            .checked_sub(dy.checked_mul(a)?)?
+            .checked_add(dy.checked_mul(b.checked_mul(2)?)?)?;
+        if align > best_align {
+            best_align = align;
+            best = Some((a, b));
+        }
+    }
+    best.map(|(a, b)| (a as i64, b as i64))
 }
 
 /// Why a coordinate is rejected.
@@ -228,7 +300,9 @@ impl RoomField {
 /// When the map's field crosses a threshold (a panic spreading, a war moving
 /// through the hexes), the elephant doesn't whisper — it rings: the ring
 /// names the region that crossed, the coordinates of its hexes, the center of
-/// the region, the map field that triggered it, and the threshold it crossed.
+/// the region, the map field that triggered it, the threshold it crossed,
+/// and — because the ring is propagation-aware — the **front**: the D₆ unit
+/// the region moved along since the ring last fired (see [`front_direction`]).
 /// On a stable map, nothing rings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ring {
@@ -239,6 +313,12 @@ pub struct Ring {
     pub coords: Vec<(i64, i64)>,
     /// The first coordinate of the region (its anchor hex).
     pub center: (i64, i64),
+    /// The D₆ front: the unit direction the region has moved along since the
+    /// ring last named one — where the fight is heading. `None` on the
+    /// montage's first frame (a fresh blaze has no history to move against)
+    /// and when the region did not move (a settled blaze is not a montage).
+    /// Always one of [`hex_directions`].
+    pub front: Option<(i64, i64)>,
     /// The map field (aggregate temperature) that crossed the threshold.
     pub map_field: f64,
     /// The deadband threshold crossed.
@@ -249,13 +329,16 @@ pub struct Ring {
 ///
 /// Every room is a hex; every hex is an Eisenstein integer. The map owns two
 /// layers: the rooms (`coord -> name`, the MUD's geography) and the fields
-/// (`coord -> RoomField`, the elephant's readings of each room). Distance,
-/// adjacency, disks, and paths are all exact integer lattice math — no
-/// floating point, no drift, no trigonometry.
+/// (`coord -> RoomField`, the elephant's readings of each room), plus the
+/// montage memory (`last_blaze`, the region the ring named last time — what
+/// makes the deadband propagation-aware). Distance, adjacency, disks, paths,
+/// and the ring's front are all exact integer lattice math — no drift, no
+/// trigonometry.
 #[derive(Debug, Clone, Default)]
 pub struct HexRoomMap {
     rooms: BTreeMap<(i64, i64), String>,
     fields: BTreeMap<(i64, i64), RoomField>,
+    last_blaze: Option<Vec<(i64, i64)>>,
 }
 
 impl HexRoomMap {
@@ -316,6 +399,16 @@ impl HexRoomMap {
     /// Iterate over `(coord, name)` for every room, in coordinate order.
     pub fn iter(&self) -> impl Iterator<Item = ((i64, i64), &str)> {
         self.rooms.iter().map(|(&c, n)| (c, n.as_str()))
+    }
+
+    /// Iterate over `(coord, &RoomField)` for every room the elephant has
+    /// read, in coordinate order — the read-back twin of [`set_field`].
+    ///
+    /// Rooms without a field are not included: an unread room has no reading.
+    /// The bridge layer drives the elephant from exactly this seam (the map
+    /// stores the fields; floats never leave the struct they arrived in).
+    pub fn fields(&self) -> impl Iterator<Item = ((i64, i64), &RoomField)> {
+        self.fields.iter().map(|(&c, f)| (c, f))
     }
 
     /// The six hex neighbors of a coordinate — the D₆ unit directions.
@@ -464,11 +557,32 @@ impl HexRoomMap {
     /// aggregate does (the whole map warming at once), the ring names every
     /// read room. On a stable map (`|map_field| < threshold`, or no rooms
     /// read) nothing rings — `None`.
-    pub fn deadband_ring(&self, map_field: f64, threshold: f64) -> Option<Ring> {
-        if !(threshold >= 0.0) || !(map_field.abs() >= threshold) {
-            return None;
-        }
-        if self.fields.is_empty() {
+    ///
+    /// # The ring is propagation-aware
+    ///
+    /// The map remembers the region the ring last named (the montage
+    /// memory), so this is `&mut self`: each ring compares the region it
+    /// names against the previous frame and reports the **front** — the D₆
+    /// unit the region moved along ([`front_direction`]). A fight migrating
+    /// hex-by-hex is a montage sequence with a front, not a set of isolated
+    /// rooms: frame 1 names the seed hex (`front: None` — a fresh blaze has
+    /// no history), frame 2 names the region plus the direction it spread.
+    /// When the band goes quiet the montage ends and the memory resets, so
+    /// the next blaze starts its own sequence. A re-run over an unchanged
+    /// region reports `front: None` — a standing fire is not moving.
+    pub fn deadband_ring(&mut self, map_field: f64, threshold: f64) -> Option<Ring> {
+        // Quiet unless the field is a real number that crossed the band:
+        // NaN readings and unread maps stay quiet (NaN compares false with
+        // everything, so `<` alone would let it slip through — spelled out).
+        let quiet = threshold.is_nan()
+            || threshold < 0.0
+            || map_field.is_nan()
+            || map_field.abs() < threshold
+            || self.fields.is_empty();
+        if quiet {
+            // The band went quiet: the montage ends here. Forget the last
+            // blaze so the next one starts its own sequence.
+            self.last_blaze = None;
             return None;
         }
         // Flood-fill over read rooms with panic >= threshold; keep the
@@ -509,6 +623,8 @@ impl HexRoomMap {
         } else {
             best
         };
+        let front = front_direction(self.last_blaze.as_deref().unwrap_or(&[]), &coords);
+        self.last_blaze = Some(coords.clone());
         let region = coords
             .iter()
             .filter_map(|c| self.rooms.get(c).cloned())
@@ -518,6 +634,7 @@ impl HexRoomMap {
             region,
             coords,
             center,
+            front,
             map_field,
             threshold,
         })
@@ -574,8 +691,8 @@ mod tests {
         assert_eq!(m.norm_distance((0, 0), (1, 1)), Some(1));
         assert_eq!(m.norm_distance((0, 0), (3, -2)), Some(19)); // 9 + 6 + 4
         assert_eq!(m.norm_distance((0, 0), (1, -1)), Some(3)); // not a square — never a lattice distance
-        // Multiplicativity of the norm: norm(a-b) with a=2·(1,0)... check
-        // norm of (2,0) = 4 = 2².
+                                                               // Multiplicativity of the norm: norm(a-b) with a=2·(1,0)... check
+                                                               // norm of (2,0) = 4 = 2².
         assert_eq!(m.norm_distance((0, 0), (2, 0)), Some(4));
     }
 
@@ -618,7 +735,10 @@ mod tests {
             assert!(disk1.contains(&n));
         }
         // Disks are translation-invariant in size.
-        assert_eq!(m.region((4, 4), 3).unwrap().len(), m.region((0, 0), 3).unwrap().len());
+        assert_eq!(
+            m.region((4, 4), 3).unwrap().len(),
+            m.region((0, 0), 3).unwrap().len()
+        );
     }
 
     #[test]
@@ -667,18 +787,26 @@ mod tests {
         m.add_room((1, 0), "b").unwrap();
         m.add_room((0, 1), "c").unwrap();
         m.add_room((1, 1), "unread").unwrap(); // no field — not part of the reading
-        // Warm room: mood +0.5 -> warmth 0.075 (the elephant's neutral baseline
-        // is -0.075 because cynicism 0.5 is subtracted raw)
+                                               // Warm room: mood +0.5 -> warmth 0.075 (the elephant's neutral baseline
+                                               // is -0.075 because cynicism 0.5 is subtracted raw)
         let warm = RoomField::new(0.5, 0.5, 0.5, 0.5, 0.0, 0.0, 0.5);
         let cold = RoomField::new(0.0, 0.5, 0.5, 1.0, 0.0, 0.0, 0.5);
         let neutral = RoomField::new(0.0, 0.5, 0.5, 0.5, 0.0, 0.0, 0.5);
-        assert!((neutral.warmth() - (-0.075)).abs() < 1e-12, "neutral baseline");
+        assert!(
+            (neutral.warmth() - (-0.075)).abs() < 1e-12,
+            "neutral baseline"
+        );
         m.set_field((0, 0), warm).unwrap();
         m.set_field((1, 0), cold).unwrap();
         m.set_field((0, 1), neutral).unwrap();
         let t = m.map_temperature().unwrap();
         let expected = (warm.warmth() + cold.warmth() + neutral.warmth()) / 3.0;
-        assert!((t - expected).abs() < 1e-12, "temperature {} vs {}", t, expected);
+        assert!(
+            (t - expected).abs() < 1e-12,
+            "temperature {} vs {}",
+            t,
+            expected
+        );
         // map_panic reads too.
         assert_eq!(m.map_panic().unwrap(), 0.0);
         m.set_field((0, 0), RoomField::new(0.0, 0.5, 0.5, 0.5, 0.0, 0.9, 0.5))
@@ -714,7 +842,11 @@ mod tests {
         }
         m.set_field((12, 0), field(0.0)).unwrap();
         assert_eq!(m.deadband_ring(0.05, 0.5), None, "stable map stays quiet");
-        assert_eq!(m.deadband_ring(0.49, 0.5), None, "below the band stays quiet");
+        assert_eq!(
+            m.deadband_ring(0.49, 0.5),
+            None,
+            "below the band stays quiet"
+        );
 
         // Panic spreads through the tavern district: the Tap and its six
         // neighbors all cross the threshold. The temple stays calm.
@@ -744,6 +876,126 @@ mod tests {
         }
         let ring3 = m2.deadband_ring(0.6, 0.5).unwrap();
         assert_eq!(ring3.coords.len(), 3);
+    }
+
+    #[test]
+    fn front_direction_names_the_d6_unit_of_travel() {
+        // Seeded at the origin, spreads east: the front is the unit 1.
+        assert_eq!(front_direction(&[(0, 0)], &[(0, 0), (1, 0)]), Some((1, 0)));
+        // Spreads north-east: the front is ω.
+        assert_eq!(front_direction(&[(0, 0)], &[(0, 0), (0, 1)]), Some((0, 1)));
+        // Reflections: west, and south-west (ω²).
+        assert_eq!(front_direction(&[(1, 0)], &[(1, 0), (0, 0)]), Some((-1, 0)));
+        assert_eq!(
+            front_direction(&[(0, 0)], &[(0, 0), (-1, -1)]),
+            Some((-1, -1))
+        );
+        // A longer march stays east; the turn north-east picks the unit 1+ω
+        // (displacement (3,3) — exactly along the (1,1) direction).
+        assert_eq!(
+            front_direction(&[(0, 0), (1, 0)], &[(0, 0), (1, 0), (2, 0)]),
+            Some((1, 0))
+        );
+        assert_eq!(
+            front_direction(&[(0, 0), (1, 0), (2, 0)], &[(0, 0), (1, 0), (2, 0), (2, 1)]),
+            Some((1, 1))
+        );
+        // Settled: no displacement, no front — a standing fire is not a montage.
+        assert_eq!(front_direction(&[(0, 0), (1, 0)], &[(0, 0), (1, 0)]), None);
+        // Empty frames carry no direction.
+        assert_eq!(front_direction(&[], &[(0, 0)]), None);
+        assert_eq!(front_direction(&[(0, 0)], &[]), None);
+        // The front is always one of the six units — the argmax runs over
+        // exactly that set (this displacement ties east/SE and breaks to
+        // the first in directions order).
+        let f = front_direction(&[(5, -3)], &[(5, -3), (7, -2)]).unwrap();
+        assert!(hex_directions().contains(&f));
+    }
+
+    #[test]
+    fn fields_read_back_what_set_field_wrote() {
+        let mut m = HexRoomMap::new();
+        m.add_room((0, 0), "read").unwrap();
+        m.add_room((1, 0), "unread").unwrap();
+        assert_eq!(m.fields().count(), 0, "nothing read yet");
+        let warm = RoomField::new(0.5, 0.5, 0.5, 0.5, 0.0, 0.0, 0.5);
+        m.set_field((0, 0), warm).unwrap();
+        let collected: Vec<_> = m.fields().collect();
+        assert_eq!(
+            collected,
+            vec![((0, 0), &warm)],
+            "coord order, unread skipped"
+        );
+        // Overwriting a field replaces the reading.
+        let hot = RoomField::new(0.0, 0.5, 0.5, 0.5, 0.0, 0.9, 0.5);
+        m.set_field((0, 0), hot).unwrap();
+        assert_eq!(m.fields().next().map(|(_, f)| *f), Some(hot));
+    }
+
+    #[test]
+    fn ring_is_propagation_aware_the_montage_has_a_front() {
+        fn field(panic: f64) -> RoomField {
+            RoomField::new(0.0, 0.5, 0.5, 0.5, 0.0, panic, 0.5)
+        }
+
+        // A calm town; a fight will migrate through it hex-by-hex.
+        let mut m = HexRoomMap::new();
+        for c in m.region((0, 0), 3).unwrap() {
+            m.add_room(c, &format!("town-{}{}", c.0, c.1)).unwrap();
+            m.set_field(c, field(0.05)).unwrap();
+        }
+
+        // Frame 1: the fight is seeded at one hex. The ring names the seed;
+        // the first frame of a montage has no front.
+        m.set_field((0, 0), field(0.9)).unwrap();
+        let r1 = m
+            .deadband_ring(0.9, 0.5)
+            .expect("the seed crosses the band");
+        assert_eq!(r1.coords, vec![(0, 0)]);
+        assert_eq!(r1.region, vec!["town-00"]);
+        assert_eq!(
+            r1.front, None,
+            "a fresh blaze has no history to move against"
+        );
+
+        // Frame 2: it propagates to the east neighbor. The ring names the
+        // connected region AND the front: the D₆ unit 1 (east).
+        m.set_field((1, 0), field(0.9)).unwrap();
+        let r2 = m.deadband_ring(0.9, 0.5).unwrap();
+        assert_eq!(r2.coords, vec![(0, 0), (1, 0)], "the connected region");
+        assert_eq!(r2.region, vec!["town-00", "town-10"]);
+        assert_eq!(r2.front, Some((1, 0)), "the front is east");
+
+        // Frame 3: it keeps moving east.
+        m.set_field((2, 0), field(0.9)).unwrap();
+        let r3 = m.deadband_ring(0.9, 0.5).unwrap();
+        assert_eq!(r3.coords.len(), 3);
+        assert!(r3.coords.contains(&(2, 0)));
+        assert_eq!(r3.front, Some((1, 0)), "still heading east");
+
+        // Frame 4: the fight turns north-east (hex (2,1)): front = 1+ω.
+        m.set_field((2, 1), field(0.9)).unwrap();
+        let r4 = m.deadband_ring(0.9, 0.5).unwrap();
+        assert_eq!(r4.coords.len(), 4);
+        assert!(r4.coords.contains(&(2, 1)));
+        assert_eq!(r4.front, Some((1, 1)), "the front turns with the fight");
+
+        // Frame 5: nothing moves. A standing fire is not a montage.
+        let r5 = m.deadband_ring(0.9, 0.5).unwrap();
+        assert_eq!(r5.coords.len(), 4);
+        assert_eq!(r5.front, None, "settled: no direction of travel");
+
+        // The band goes quiet — the fires die down — and the montage memory
+        // resets, so a new seed starts its own sequence: frontless.
+        assert!(m.deadband_ring(0.4, 0.5).is_none());
+        for c in [(0, 0), (1, 0), (2, 0), (2, 1)] {
+            m.set_field(c, field(0.05)).unwrap();
+        }
+        assert!(m.deadband_ring(0.4, 0.5).is_none(), "the town calms down");
+        m.set_field((-3, 0), field(0.9)).unwrap();
+        let r6 = m.deadband_ring(0.9, 0.5).unwrap();
+        assert_eq!(r6.coords, vec![(-3, 0)]);
+        assert_eq!(r6.front, None, "a new montage starts frontless");
     }
 
     #[test]

@@ -78,8 +78,9 @@ map.neighbors((0, 0));      // [(1,0),(0,1),(1,1),(-1,0),(0,-1),(-1,-1)] — the
 map.distance((0, 0), (5, 0));   // Some(5) — true hex distance
 map.path((0, 0), (5, 0));       // Some([...]) — hex BFS over occupied rooms
 map.region((0, 0), 2);          // 19 cells — the hex disk
+map.fields();                   // (coord, &RoomField) per read room — set_field's read-back
 map.map_temperature();          // Option<f64> — the grid's aggregate field
-map.deadband_ring(0.8, 0.5);    // Option<Ring> — the terrain's deadband
+map.deadband_ring(0.8, 0.5);    // Option<Ring> — the terrain's deadband, with the front
 ```
 
 - `add_room(coord, name)` guards impossible coordinates: the map lives on the
@@ -93,6 +94,11 @@ map.deadband_ring(0.8, 0.5);    // Option<Ring> — the terrain's deadband
   steps; consecutive cells are always adjacent (distance 1).
 - `region(center, radius)` is the hex disk, size `3R² + 3R + 1`, translation-
   invariant across the lattice.
+- `fields()` is the read-back twin of `set_field(coord, field)`: every
+  `(coord, &RoomField)` the elephant has written, in coordinate order. This
+  is the seam the bridge and roomd drive — fields are pushed in as plain
+  numbers and read back out; the lattice layer never computes with anything
+  but exact integers.
 - `map_temperature()` is the mean warmth over every room the elephant has
   read; `map_panic()` is the mean stampede reading. `None` when nothing has
   been read — an unread map has no temperature.
@@ -118,7 +124,7 @@ cargo run --example hex_mud -- --json > map.json
 python3 bridge/hex_room_map.py --map map.json
 ```
 
-## The war spreads as a deadband ring
+## The war spreads as a deadband ring — with a front
 
 The terrain reframing (`elephant/docs/terrain-2026-08-17.md`) says it in one
 line: **a deadband rings up the chain of command.** Small moves are not
@@ -145,6 +151,30 @@ The ring's `coords` are the region's hexes — the same coordinates a path or
 a disk would use — so the chain of command knows exactly where to send help,
 and the elephant knows exactly which rooms to re-read.
 
+### The front — the ring is propagation-aware
+
+A fight migrating hex-by-hex is a **montage sequence**, not a set of isolated
+rooms: each ring is a frame, and the ring names the direction the fight is
+moving. The map remembers the region the ring last named (the montage
+memory, which is why `deadband_ring` takes `&mut self`), and each ring
+carries a `front`: the D₆ unit the region's centroid moved along since the
+previous frame — `front_direction(previous, current)`, exact integer
+arithmetic. The displacement between frames is `D = S_curr·n_prev −
+S_prev·n_curr` (integer, parallel to the centroid difference), and the front
+is the unit `u ∈ {±1, ±ω, ±ω²}` maximizing `2·Re(D·conj(u))` — the nearest
+of the six neighbors, no trig, no floats.
+
+- The first frame of a montage has no front (`None`): a fresh blaze has no
+  history to move against.
+- A re-ring over an unchanged region has no front: a standing fire is not
+  moving.
+- When the band goes quiet the montage ends and the memory resets, so the
+  next blaze starts its own sequence.
+- The bridge (`bridge/hex_room_map.py`) mirrors `front_direction` exactly;
+  its `deadband_ring` takes the previous frame's coords as `previous`
+  (stateless function, same quantities — both sides compute the same
+  numbers by design).
+
 ## The full circle
 
 ```text
@@ -153,14 +183,14 @@ hex coords ──► HexRoomMap ──► neighbors / distance / path ──► 
      ├──► RoomField (mirror)  ──► map_temperature()  ──► the grid's field
      │
      └──► bridge/hex_room_map.py (the real elephant) ──► real dials per room
-                              │
-                              ▼
-                 deadband_ring(map_field, threshold)
-                              │
-                    quiet ────┴──── ⚡ Ring naming the region
+                               │
+                               ▼
+                  deadband_ring(map_field, threshold)
+                               │
+                     quiet ────┴──── ⚡ Ring naming the region + its D₆ front
 ```
 
 Eisenstein integers are the algebra of the hex grid. The elephant is the
 room's temperature. The terrain is the room's truth. The deadband is the
 discipline that decides when the truth must ring. Now the truth has a map,
-and the map has a war.
+the map has a war, and the war has a front.

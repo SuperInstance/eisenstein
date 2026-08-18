@@ -10,7 +10,7 @@
 //! Named "algebraic_properties" because each test verifies a mathematical
 //! theorem, not just a function's output.
 
-use eisenstein::{E12, HexDisk, EisensteinTriple};
+use eisenstein::{EisensteinTriple, HexDisk, E12};
 
 #[cfg(test)]
 mod ring_axioms {
@@ -39,7 +39,10 @@ mod ring_axioms {
                     assert_eq!(
                         (a + b) + c,
                         a + (b + c),
-                        "Additive associativity failed for ({},{},{})", a, b, c
+                        "Additive associativity failed for ({},{},{})",
+                        a,
+                        b,
+                        c
                     );
                 }
             }
@@ -52,7 +55,13 @@ mod ring_axioms {
         let domain = small_domain();
         for &a in &domain {
             for &b in &domain {
-                assert_eq!(a + b, b + a, "Additive commutativity failed for {} {}", a, b);
+                assert_eq!(
+                    a + b,
+                    b + a,
+                    "Additive commutativity failed for {} {}",
+                    a,
+                    b
+                );
             }
         }
     }
@@ -81,7 +90,8 @@ mod ring_axioms {
     #[test]
     fn multiplication_is_associative() {
         // (a * b) * c == a * (b * c)
-        let domain: Vec<E12> = small_domain().into_iter()
+        let domain: Vec<E12> = small_domain()
+            .into_iter()
             .filter(|z| z.a().abs() <= 3 && z.b().abs() <= 3)
             .collect();
         for &a in &domain {
@@ -90,7 +100,10 @@ mod ring_axioms {
                     assert_eq!(
                         (a * b) * c,
                         a * (b * c),
-                        "Multiplicative associativity failed for ({},{},{})", a, b, c
+                        "Multiplicative associativity failed for ({},{},{})",
+                        a,
+                        b,
+                        c
                     );
                 }
             }
@@ -103,7 +116,13 @@ mod ring_axioms {
         let domain = small_domain();
         for &a in &domain {
             for &b in &domain {
-                assert_eq!(a * b, b * a, "Multiplicative commutativity failed for {} {}", a, b);
+                assert_eq!(
+                    a * b,
+                    b * a,
+                    "Multiplicative commutativity failed for {} {}",
+                    a,
+                    b
+                );
             }
         }
     }
@@ -121,7 +140,8 @@ mod ring_axioms {
     #[test]
     fn distributivity() {
         // a * (b + c) == a * b + a * c
-        let domain: Vec<E12> = small_domain().into_iter()
+        let domain: Vec<E12> = small_domain()
+            .into_iter()
             .filter(|z| z.a().abs() <= 3 && z.b().abs() <= 3)
             .collect();
         for &a in &domain {
@@ -130,7 +150,10 @@ mod ring_axioms {
                     assert_eq!(
                         a * (b + c),
                         a * b + a * c,
-                        "Distributivity failed for ({},{},{})", a, b, c
+                        "Distributivity failed for ({},{},{})",
+                        a,
+                        b,
+                        c
                     );
                 }
             }
@@ -172,9 +195,13 @@ mod euclidean_domain_properties {
                         if let Some((q, r)) = alpha.div_rem(beta) {
                             // Verify reconstruction: β*γ + ρ = α
                             assert_eq!(
-                                beta * q + r, alpha,
+                                beta * q + r,
+                                alpha,
                                 "Reconstruction failed: {} * {} + {} != {}",
-                                beta, q, r, alpha
+                                beta,
+                                q,
+                                r,
+                                alpha
                             );
                             // Verify Euclidean property: N(ρ) < N(β) or ρ = 0
                             let n_r = r.norm();
@@ -182,7 +209,10 @@ mod euclidean_domain_properties {
                             assert!(
                                 n_r < n_beta || (r.a() == 0 && r.b() == 0),
                                 "Euclidean property failed: N(rem)={} >= N(div)={} for {} / {}",
-                                n_r, n_beta, alpha, beta
+                                n_r,
+                                n_beta,
+                                alpha,
+                                beta
                             );
                             count += 1;
                         }
@@ -191,7 +221,11 @@ mod euclidean_domain_properties {
             }
         }
         // Ensure we actually tested a meaningful number of pairs
-        assert!(count > 1000, "Should have tested at least 1000 division pairs, got {}", count);
+        assert!(
+            count > 1000,
+            "Should have tested at least 1000 division pairs, got {}",
+            count
+        );
     }
 
     #[test]
@@ -203,9 +237,14 @@ mod euclidean_domain_properties {
                 let alpha = E12::new(a_coord, b_coord);
                 for &u in &units {
                     if let Some((_, r)) = alpha.div_rem(u) {
-                        assert_eq!(r, E12::new(0, 0),
+                        assert_eq!(
+                            r,
+                            E12::new(0, 0),
                             "Division by unit {:?} of {} should be exact, got remainder {}",
-                            u, alpha, r);
+                            u,
+                            alpha,
+                            r
+                        );
                     }
                 }
             }
@@ -253,7 +292,11 @@ mod d6_symmetry_properties {
             for _ in 0..6 {
                 current = E12::new(-current.b(), current.a() - current.b());
             }
-            assert_eq!(current, z, "Six 60° rotations should return to start: {}", z);
+            assert_eq!(
+                current, z,
+                "Six 60° rotations should return to start: {}",
+                z
+            );
         }
     }
 
@@ -270,8 +313,12 @@ mod d6_symmetry_properties {
         for &z in &test_points {
             let rots = z.d6_rotations();
             for r in &rots {
-                assert_eq!(r.norm(), z.norm(),
-                    "D₆ rotation should preserve norm of {}", z);
+                assert_eq!(
+                    r.norm(),
+                    z.norm(),
+                    "D₆ rotation should preserve norm of {}",
+                    z
+                );
             }
         }
     }
@@ -283,8 +330,11 @@ mod d6_symmetry_properties {
         let rots = z.d6_rotations();
         for i in 0..6 {
             for j in (i + 1)..6 {
-                assert_ne!(rots[i], rots[j],
-                    "Rotations {} and {} of {} should be distinct", i, j, z);
+                assert_ne!(
+                    rots[i], rots[j],
+                    "Rotations {} and {} of {} should be distinct",
+                    i, j, z
+                );
             }
         }
     }
@@ -308,34 +358,32 @@ mod d6_symmetry_properties {
     fn rotation_composition() {
         // Two 60° rotations = one 120° rotation
         // rot60(rot60(z)) == rot120(z)
-        let test_points = vec![
-            E12::new(3, 1),
-            E12::new(7, -2),
-            E12::new(0, 5),
-        ];
+        let test_points = vec![E12::new(3, 1), E12::new(7, -2), E12::new(0, 5)];
         for &z in &test_points {
             let rot60 = |p: E12| E12::new(-p.b(), p.a() - p.b());
             let double = rot60(rot60(z));
             let rots = z.d6_rotations();
             // rots[2] is 120° rotation
-            assert_eq!(double, rots[2],
-                "Two 60° rotations should equal 120° rotation for {}", z);
+            assert_eq!(
+                double, rots[2],
+                "Two 60° rotations should equal 120° rotation for {}",
+                z
+            );
         }
     }
 
     #[test]
     fn negation_is_180_rotation() {
         // -(a + bω) = (-a, -b) = 180° rotation
-        let test_points = vec![
-            E12::new(3, 1),
-            E12::new(7, -2),
-            E12::new(5, 0),
-        ];
+        let test_points = vec![E12::new(3, 1), E12::new(7, -2), E12::new(5, 0)];
         for &z in &test_points {
             let rots = z.d6_rotations();
             let neg = E12::new(-z.a(), -z.b());
-            assert_eq!(rots[3], neg,
-                "180° rotation should equal negation for {}", z);
+            assert_eq!(
+                rots[3], neg,
+                "180° rotation should equal negation for {}",
+                z
+            );
         }
     }
 }
@@ -380,7 +428,8 @@ mod norm_properties {
             for b in -100..=100 {
                 let n = E12::new(a, b).norm();
                 // Already u64, but verify the formula gives a sensible value
-                let expected = (a as i64 * a as i64 - a as i64 * b as i64 + b as i64 * b as i64) as u64;
+                let expected =
+                    (a as i64 * a as i64 - a as i64 * b as i64 + b as i64 * b as i64) as u64;
                 assert_eq!(n, expected);
                 // The discriminant of x² - ab + b² in terms of positivity:
                 // a² - ab + b² = (a - b/2)² + 3b²/4 ≥ 0, always non-negative
@@ -410,9 +459,15 @@ mod norm_properties {
         for &u1 in &units {
             for &u2 in &units {
                 let product = u1 * u2;
-                assert_eq!(product.norm(), 1,
+                assert_eq!(
+                    product.norm(),
+                    1,
                     "Product of units {} * {} should have norm 1, got {} ({})",
-                    u1, u2, product.norm(), product);
+                    u1,
+                    u2,
+                    product.norm(),
+                    product
+                );
             }
         }
     }
@@ -423,8 +478,13 @@ mod norm_properties {
         for a in -10..=10 {
             for b in -10..=10 {
                 let z = E12::new(a, b);
-                assert_eq!(z.conjugate().norm(), z.norm(),
-                    "Conjugate should preserve norm for ({},{})", a, b);
+                assert_eq!(
+                    z.conjugate().norm(),
+                    z.norm(),
+                    "Conjugate should preserve norm for ({},{})",
+                    a,
+                    b
+                );
             }
         }
     }
@@ -438,8 +498,13 @@ mod norm_properties {
                 let zzbar = z * z.conjugate();
                 let expected = z.norm() * z.norm();
                 if expected < (1u64 << 40) {
-                    assert_eq!(zzbar.norm(), expected,
-                        "z * conj(z) should have norm N(z)² for ({},{})", a, b);
+                    assert_eq!(
+                        zzbar.norm(),
+                        expected,
+                        "z * conj(z) should have norm N(z)² for ({},{})",
+                        a,
+                        b
+                    );
                 }
             }
         }
@@ -459,8 +524,12 @@ mod hex_disk_geometry {
         for r in 0u32..=50 {
             let disk = HexDisk::radius(r);
             let expected = 3 * r as u64 * r as u64 + 3 * r as u64 + 1;
-            assert_eq!(disk.count(), expected,
-                "HexDisk radius {} count formula failed", r);
+            assert_eq!(
+                disk.count(),
+                expected,
+                "HexDisk radius {} count formula failed",
+                r
+            );
         }
     }
 
@@ -469,8 +538,12 @@ mod hex_disk_geometry {
         for r in 0u32..=15 {
             let disk = HexDisk::radius(r);
             let count = disk.iter().count() as u64;
-            assert_eq!(count, disk.count(),
-                "HexDisk radius {} iter count != formula", r);
+            assert_eq!(
+                count,
+                disk.count(),
+                "HexDisk radius {} iter count != formula",
+                r
+            );
         }
     }
 
@@ -480,8 +553,12 @@ mod hex_disk_geometry {
         for r in 0u32..=6 {
             let disk = HexDisk::radius(r);
             for p in disk.iter() {
-                assert!(disk.contains(&p),
-                    "Iterated point {} not contained in disk({})", p, r);
+                assert!(
+                    disk.contains(&p),
+                    "Iterated point {} not contained in disk({})",
+                    p,
+                    r
+                );
             }
         }
     }
@@ -517,16 +594,25 @@ mod hex_disk_geometry {
         // Negation preserves the disk
         for p in disk.iter() {
             let neg = E12::new(-p.a(), -p.b());
-            assert!(disk.contains(&neg),
-                "Negation {} of {} not in disk(5)", neg, p);
+            assert!(
+                disk.contains(&neg),
+                "Negation {} of {} not in disk(5)",
+                neg,
+                p
+            );
         }
 
         // All D₆ rotations preserve the norm
         for p in disk.iter() {
             let n = p.norm();
             for r in &p.d6_rotations() {
-                assert_eq!(r.norm(), n,
-                    "D₆ rotation should preserve norm: {} -> {}", p, r);
+                assert_eq!(
+                    r.norm(),
+                    n,
+                    "D₆ rotation should preserve norm: {} -> {}",
+                    p,
+                    r
+                );
             }
         }
     }
@@ -537,8 +623,7 @@ mod hex_disk_geometry {
         let small = HexDisk::radius(3);
         let large = HexDisk::radius(5);
         for p in small.iter() {
-            assert!(large.contains(&p),
-                "Point {} in disk(3) not in disk(5)", p);
+            assert!(large.contains(&p), "Point {} in disk(3) not in disk(5)", p);
         }
     }
 }
@@ -562,7 +647,10 @@ mod eisenstein_triple_properties {
             assert_eq!(
                 a * a - a * b + b * b,
                 c * c,
-                "Triple ({},{},{}) doesn't satisfy a²-ab+b²=c²", a, b, c
+                "Triple ({},{},{}) doesn't satisfy a²-ab+b²=c²",
+                a,
+                b,
+                c
             );
         }
     }
@@ -571,8 +659,11 @@ mod eisenstein_triple_properties {
     fn generated_triples_are_primitive() {
         let triples = EisensteinTriple::generate(15);
         for t in &triples {
-            assert!(t.is_primitive(),
-                "Generated triple {:?} should be primitive", t);
+            assert!(
+                t.is_primitive(),
+                "Generated triple {:?} should be primitive",
+                t
+            );
         }
     }
 
@@ -582,9 +673,12 @@ mod eisenstein_triple_properties {
         let triples = EisensteinTriple::generate(20);
         for i in 1..triples.len() {
             assert!(
-                triples[i].c() >= triples[i-1].c(),
+                triples[i].c() >= triples[i - 1].c(),
                 "Triples should be roughly ordered by c: triple[{}].c={} < triple[{}].c={}",
-                i, triples[i].c(), i-1, triples[i-1].c()
+                i,
+                triples[i].c(),
+                i - 1,
+                triples[i - 1].c()
             );
         }
     }
@@ -596,9 +690,11 @@ mod eisenstein_triple_properties {
         // Eisenstein should have significantly more.
         let triples = EisensteinTriple::all_with_max_norm(50);
         // Just verify we get a healthy count (exact number depends on search)
-        assert!(triples.len() >= 16,
+        assert!(
+            triples.len() >= 16,
             "Should find at least 16 Eisenstein triples with c ≤ 50, found {}",
-            triples.len());
+            triples.len()
+        );
     }
 
     #[test]
@@ -608,7 +704,9 @@ mod eisenstein_triple_properties {
         // (5,0,5), (7,0,7), (8,3,7)...
         // Let's check that (8,3,7) appears
         let triples = EisensteinTriple::all_with_max_norm(10);
-        let found = triples.iter().any(|t| t.a() == 8 && t.b() == 3 && t.c() == 7);
+        let found = triples
+            .iter()
+            .any(|t| t.a() == 8 && t.b() == 3 && t.c() == 7);
         assert!(found, "(8,3,7) should be found among triples with c ≤ 10");
     }
 
@@ -617,9 +715,16 @@ mod eisenstein_triple_properties {
         // For every triple, norm = c²
         let triples = EisensteinTriple::all_with_max_norm(20);
         for t in &triples {
-            assert_eq!(t.norm(), (t.c() as u64) * (t.c() as u64),
+            assert_eq!(
+                t.norm(),
+                (t.c() as u64) * (t.c() as u64),
                 "Triple norm {} != c² ({}) for ({},{},{})",
-                t.norm(), (t.c() as u64) * (t.c() as u64), t.a(), t.b(), t.c());
+                t.norm(),
+                (t.c() as u64) * (t.c() as u64),
+                t.a(),
+                t.b(),
+                t.c()
+            );
         }
     }
 }
@@ -641,23 +746,17 @@ mod gcd_properties {
         ];
         for &a in &test_cases {
             let g = a.gcd(a);
-            assert_eq!(g.norm(), a.norm(),
-                "gcd(a,a) should have same norm as a");
+            assert_eq!(g.norm(), a.norm(), "gcd(a,a) should have same norm as a");
         }
     }
 
     #[test]
     fn gcd_with_zero_returns_self() {
         // gcd(a, 0) = a (normalized)
-        let test_cases = vec![
-            E12::new(5, 0),
-            E12::new(3, -2),
-            E12::new(7, 1),
-        ];
+        let test_cases = vec![E12::new(5, 0), E12::new(3, -2), E12::new(7, 1)];
         for &a in &test_cases {
             let g = a.gcd(E12::new(0, 0));
-            assert_eq!(g.norm(), a.norm(),
-                "gcd(a, 0) should have same norm as a");
+            assert_eq!(g.norm(), a.norm(), "gcd(a, 0) should have same norm as a");
         }
     }
 
@@ -672,8 +771,7 @@ mod gcd_properties {
         ];
         for &a in &test_cases {
             let g = a.gcd(E12::new(1, 0));
-            assert_eq!(g.norm(), 1,
-                "gcd({}, 1) should be a unit (norm 1)", a);
+            assert_eq!(g.norm(), 1, "gcd({}, 1) should be a unit (norm 1)", a);
         }
     }
 
@@ -704,7 +802,8 @@ mod gcd_properties {
             let g = a.gcd(b);
             assert!(
                 g.a() > 0 || (g.a() == 0 && g.b() >= 0),
-                "GCD should be positive-normalized, got {}", g
+                "GCD should be positive-normalized, got {}",
+                g
             );
         }
     }
@@ -740,8 +839,12 @@ mod integer_properties {
         let omega = E12::new(0, 1);
         let omega_sq = omega * omega; // ω²
         let omega_cubed = omega_sq * omega; // ω³ = 1
-        assert_eq!(omega_cubed, E12::new(1, 0),
-            "ω³ should equal 1, got {}", omega_cubed);
+        assert_eq!(
+            omega_cubed,
+            E12::new(1, 0),
+            "ω³ should equal 1, got {}",
+            omega_cubed
+        );
     }
 
     #[test]
@@ -750,8 +853,11 @@ mod integer_properties {
         let omega = E12::new(0, 1);
         let omega_sq = omega * omega;
         let omega_conj = omega.conjugate();
-        assert_eq!(omega_sq, omega_conj,
-            "ω² should equal conjugate of ω: {} vs {}", omega_sq, omega_conj);
+        assert_eq!(
+            omega_sq, omega_conj,
+            "ω² should equal conjugate of ω: {} vs {}",
+            omega_sq, omega_conj
+        );
     }
 
     #[test]
@@ -761,8 +867,12 @@ mod integer_properties {
         let omega = E12::new(0, 1);
         let omega_sq = omega * omega;
         let sum = one + omega + omega_sq;
-        assert_eq!(sum, E12::new(0, 0),
-            "1 + ω + ω² should equal 0, got {}", sum);
+        assert_eq!(
+            sum,
+            E12::new(0, 0),
+            "1 + ω + ω² should equal 0, got {}",
+            sum
+        );
     }
 
     #[test]
@@ -773,8 +883,13 @@ mod integer_properties {
         for &u1 in &units {
             for &u2 in &units {
                 let product = u1 * u2;
-                assert_eq!(product.norm(), 1,
-                    "Product of units {} * {} should have norm 1", u1, u2);
+                assert_eq!(
+                    product.norm(),
+                    1,
+                    "Product of units {} * {} should have norm 1",
+                    u1,
+                    u2
+                );
             }
         }
     }

@@ -134,7 +134,7 @@ graph LR
     G --> H[map field<br/>map_temperature / map_panic]
     H --> I{deadband_ring<br/>map_field crosses threshold?}
     I -->|no| J[quiet — stable map]
-    I -->|yes| K[⚡ Ring naming<br/>the spreading region]
+    I -->|yes| K[⚡ Ring naming<br/>the region + its D₆ front]
 ```
 
 ![Hex room map — the honeycomb city](assets/images/hex-room-map.png)
@@ -198,7 +198,10 @@ takes the same idea seriously as geometry: adjacency on the lattice is a
 cut. A warm room next to a cold room is a montage cut — the sauna/plunge
 gap the elephant measures — and the deadband rings when the contrast
 spreads, because a fight migrating through the hexes is a montage
-sequence, not a set of isolated rooms.
+sequence, not a set of isolated rooms. The ring is propagation-aware: it
+names the connected region the fight has reached *and* the front — the D₆
+unit the region moved along since the last ring, exact integer arithmetic
+from the centroid displacement between two frames of the montage.
 
 ## The elephant seam, concretely
 
