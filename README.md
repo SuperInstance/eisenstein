@@ -12,6 +12,8 @@
 
 **Exact hexagonal coordinates. No floating point. No drift. No dependencies.**
 
+![The lattice room at night — brass rings on navy, each cell an exact integer](assets/images/gallery-eisenstein.jpg)
+
 `#![no_std]`. Zero dependencies. Zero unsafe code. Exact integer arithmetic for hexagonal lattices through Eisenstein integers — `a + bω` where `ω = (-1 + √-3)/2`. The norm `a² - ab + b²` is always an integer. No floating point, no rounding, no drift. This is the algebra of the hexagonal lattice, and it's exact all the way down.
 
 If you're building anything on a hex grid — games, simulations, sensor networks, safety-critical systems — this is where you start. The D₆ symmetry group is baked into the type system. Six Eisenstein units map to six hex neighbors. No lookup tables. No trigonometry. The math does the work.
